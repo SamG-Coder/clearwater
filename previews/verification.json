@@ -1,0 +1,211 @@
+{
+  "fft": {
+    "maxError": 3.882331766069669e-7,
+    "roundtripError": 2.980232238769531e-7,
+    "modes": 5,
+    "axes": 2,
+    "cascades": 3,
+    "complexFields": 2
+  },
+  "optics": {
+    "causticMean": [
+      0.9922281987965107,
+      0.9922288879752159,
+      0.9922316186130047
+    ],
+    "hdrFinite": true,
+    "glareFinite": true,
+    "psfEnergy": [
+      1.0000001192092896,
+      1.000000238418579,
+      0.9999998807907104
+    ]
+  },
+  "noReadback": 0,
+  "first": {
+    "finite": true,
+    "min": -0.8635790348052979,
+    "max": 0.8065742254257202,
+    "rms": 0.21775979776158014,
+    "ripplePeak": 0,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "errors": [],
+    "stats": {
+      "pipelineCompiles": 20,
+      "pipelineCacheHits": 0,
+      "bindGroupsCreated": 4592,
+      "submissions": 154,
+      "dispatches": 4592,
+      "uniformBytesUploaded": 1042032,
+      "dataBytesUploaded": 19922944,
+      "readbackBytes": 34242560
+    }
+  },
+  "ripple": {
+    "finite": true,
+    "min": -0.8597536087036133,
+    "max": 0.8091076016426086,
+    "rms": 0.21765060319158208,
+    "ripplePeak": 0.009746883064508438,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "errors": [],
+    "stats": {
+      "pipelineCompiles": 20,
+      "pipelineCacheHits": 0,
+      "bindGroupsCreated": 6232,
+      "submissions": 208,
+      "dispatches": 6232,
+      "uniformBytesUploaded": 1415216,
+      "dataBytesUploaded": 19922944,
+      "readbackBytes": 38436864
+    }
+  },
+  "distant": {
+    "finite": true,
+    "min": -0.8482232093811035,
+    "max": 0.8832862377166748,
+    "rms": 0.21649399606847897,
+    "ripplePeak": 0,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "errors": [],
+    "stats": {
+      "pipelineCompiles": 20,
+      "pipelineCacheHits": 0,
+      "bindGroupsCreated": 14083,
+      "submissions": 466,
+      "dispatches": 14083,
+      "uniformBytesUploaded": 3202448,
+      "dataBytesUploaded": 19922944,
+      "readbackBytes": 42631168
+    }
+  },
+  "open": {
+    "finite": true,
+    "min": -2.192516565322876,
+    "max": 2.8713560104370117,
+    "rms": 0.5841974574817105,
+    "ripplePeak": 0,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "errors": [],
+    "stats": {
+      "pipelineCompiles": 20,
+      "pipelineCacheHits": 0,
+      "bindGroupsCreated": 19885,
+      "submissions": 658,
+      "dispatches": 19885,
+      "uniformBytesUploaded": 4520976,
+      "dataBytesUploaded": 19922944,
+      "readbackBytes": 46825472
+    }
+  },
+  "controls": {
+    "pause": true,
+    "reset": true,
+    "resize": true,
+    "debugViews": true,
+    "glareToggle": true,
+    "pngExport": true
+  },
+  "diagnostics": {
+    "ready": true,
+    "errors": [],
+    "state": {
+      "x": 10000,
+      "z": -10000,
+      "y": 3,
+      "yaw": 0,
+      "pitch": -0.19,
+      "time": 20,
+      "playing": false,
+      "frames": 325
+    },
+    "frames": 325,
+    "cascades": [
+      4.6,
+      37,
+      293
+    ],
+    "fftSize": 256,
+    "width": 1152,
+    "height": 720,
+    "frameMs": 3.4600000381469727,
+    "readbackBytes": 42631168
+  },
+  "browserErrors": []
+}
