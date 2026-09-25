@@ -6,3 +6,4 @@ pebbles.jpg
 node_modules/
 previews/*log
 previews/*.ptx
+previews/export.png
