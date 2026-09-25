@@ -17,8 +17,10 @@ npm start
 
 Open **http://localhost:5173**. For another port: `$env:PORT='5186'; npm start`.
 
-- Drag to look; WASD to travel; hold Shift to move faster.
-- Scroll to change camera height. Click nearby water to generate ripples.
+- Drag or use arrow keys to look: right/left and up/down follow your input direction.
+- WASD flies relative to the camera; W follows the direction you are looking, including pitch. E rises and Q descends, with a minimum camera height of 0.65 m.
+- Scroll up to increase travel speed, down to decrease it (0.1–200 m/s). Hold either Shift for a temporary 6× boost. Current speed appears in the footer.
+- Click nearby water to generate ripples.
 - Space pauses; H hides controls; Reset view returns to the starting point.
 - Clearwater and Open water presets set wave energy, depth and camera position.
 - Depth, exposure, resolution, caustic/normal diagnostics, lens glare and continuous drift are adjustable.

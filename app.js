@@ -8,6 +8,7 @@ const state = {
   y: 1.55,
   yaw: 0,
   pitch: -0.4,
+  speed: 2.2,
   time: q.has("t") ? Number(q.get("t")) : 0,
   playing: !q.has("t"),
   frames: 0,
@@ -82,7 +83,14 @@ $("toggle").onclick = () => {
     : "Hide controls ↗";
 };
 $("reset").onclick = () =>
-  Object.assign(state, { x: 0, z: 0, y: 1.55, yaw: 0, pitch: -0.4 });
+  Object.assign(state, {
+    x: 0,
+    z: 0,
+    y: 1.55,
+    yaw: 0,
+    pitch: -0.4,
+    speed: 2.2,
+  });
 for (const button of document.querySelectorAll("[data-preset]"))
   button.onclick = () => {
     const open = button.dataset.preset === "swell";
@@ -102,10 +110,10 @@ canvas.onpointerdown = (e) => {
 };
 canvas.onpointermove = (e) => {
   if (!drag) return;
-  state.yaw -= (e.clientX - drag.x) * 0.003;
+  state.yaw += (e.clientX - drag.x) * 0.003;
   state.pitch = Math.max(
-    -1.45,
-    Math.min(0.35, state.pitch + (e.clientY - drag.y) * 0.003),
+    -1.55,
+    Math.min(1.55, state.pitch - (e.clientY - drag.y) * 0.003),
   );
   drag.x = e.clientX;
   drag.y = e.clientY;
@@ -120,15 +128,17 @@ canvas.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
-    state.y = Math.max(
-      0.65,
-      Math.min(30, state.y * Math.exp(e.deltaY * 0.001)),
+    const delta =
+      e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1);
+    state.speed = Math.max(
+      0.1,
+      Math.min(200, state.speed * Math.exp(-delta * 0.002)),
     );
   },
   { passive: false },
 );
 addEventListener("keydown", (e) => {
-  if (/INPUT|SELECT/.test(e.target.tagName)) return;
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
   keys.add(e.code);
   if (
     ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
@@ -136,8 +146,8 @@ addEventListener("keydown", (e) => {
     )
   )
     e.preventDefault();
-  if (e.code === "Space") play(!state.playing);
-  if (e.code === "KeyH") $("toggle").click();
+  if (e.code === "Space" && !e.repeat) play(!state.playing);
+  if (e.code === "KeyH" && !e.repeat) $("toggle").click();
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 addEventListener("blur", () => keys.clear());
@@ -358,16 +368,42 @@ async function frame(now) {
     if (!locked && !document.hidden) {
       await resize();
       const start = performance.now(),
-        speed = (keys.has("ShiftLeft") ? 14 : 2.2) * dt;
+        boost = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 6 : 1,
+        speed = state.speed * boost * dt;
+      state.yaw +=
+        ((keys.has("ArrowRight") ? 1 : 0) - (keys.has("ArrowLeft") ? 1 : 0)) *
+        dt;
+      state.pitch = Math.max(
+        -1.55,
+        Math.min(
+          1.55,
+          state.pitch +
+            ((keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0)) *
+              dt,
+        ),
+      );
       let forward =
           (keys.has("KeyW") ? 1 : 0) -
           (keys.has("KeyS") ? 1 : 0) +
           ($("cruise").checked ? 1 : 0),
-        side = (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
+        side = (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0),
+        up = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
+      const length = Math.max(1, Math.hypot(forward, side, up));
+      forward /= length;
+      side /= length;
+      up /= length;
       state.x +=
-        speed * (Math.sin(state.yaw) * forward + Math.cos(state.yaw) * side);
+        speed *
+        (Math.sin(state.yaw) * Math.cos(state.pitch) * forward +
+          Math.cos(state.yaw) * side);
       state.z +=
-        speed * (-Math.cos(state.yaw) * forward + Math.sin(state.yaw) * side);
+        speed *
+        (-Math.cos(state.yaw) * Math.cos(state.pitch) * forward +
+          Math.sin(state.yaw) * side);
+      state.y = Math.max(
+        0.65,
+        state.y + speed * (Math.sin(state.pitch) * forward + up),
+      );
       if (state.playing) state.time += dt;
       const batch = rt.batch();
       waves(batch);
@@ -385,7 +421,7 @@ async function frame(now) {
         : "PAUSED";
       if (state.frames % 15 === 0)
         $("metrics").textContent =
-          `${Math.round(1 / dt)} FPS · ${width} × ${height} · ${Math.round(state.x)}, ${Math.round(state.z)} m`;
+          `${Math.round(1 / dt)} FPS · ${width} × ${height} · SPEED ${(state.speed * boost).toFixed(1)} m/s · ${Math.round(state.x)}, ${Math.round(state.z)} m`;
     }
     requestAnimationFrame(frame);
   } catch (e) {
