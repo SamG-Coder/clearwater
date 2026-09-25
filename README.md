@@ -81,7 +81,7 @@ The optical design is reimplemented, not a pixel-identical port: the lens uses t
 
 Published site: **[samg-coder.github.io/clearwater](https://samg-coder.github.io/clearwater/)**.
 
-`npm run build` stages the browser entry, all 37 required JavaScript modules, shared CUDA source, seabed asset and licenses into `dist/`, with relative URLs and `.nojekyll` for Pages. The Pages workflow checks and builds pull requests, and deploys pushes to `main`. The Windows workflow builds a native CUDA package and uploads it as `ClearwaterNative-Windows-x64`; hosted runners compile it but do not run the GPU smoke test.
+`npm run build` stages the browser entry, all 37 required JavaScript modules, shared CUDA source, seabed asset and licenses into `dist/`, with relative URLs and `.nojekyll` for Pages. Actions runs browser checks and Pages deployment only: pull requests are checked and built, and pushes to `main` deploy the site. Build the native application locally using `Native/build.ps1`; native CUDA builds do not run on Actions.
 
 ## Provenance
 

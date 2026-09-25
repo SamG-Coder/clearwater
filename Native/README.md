@@ -4,6 +4,8 @@ Native Windows CUDA application with two independent windows: a water view and a
 
 ## Build and run
 
+Native builds are local only; GitHub Actions handles the browser version and Pages deployment.
+
 Requires Windows 10/11, an NVIDIA CUDA-capable GPU with an up-to-date driver, CUDA Toolkit 13.x, and Visual Studio C++ build tools with the Windows SDK.
 
 ```powershell
