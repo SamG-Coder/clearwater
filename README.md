@@ -2,6 +2,10 @@
 
 A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com/Aureliengmz/clearwater), extended with three FFT ocean scales and unrestricted camera travel.
 
+**[Launch the live demo](https://samg-coder.github.io/clearwater/)** · [Native Windows version](Native/README.md)
+
+The live demo runs directly in a WebGPU-capable browser; no installation is needed.
+
 ![Clearwater CUDA](previews/clearwater-ui.png)
 
 All simulation and image formation lives in [`src/clearwater.cu`](src/clearwater.cu). The browser executes it through [SamG-Coder/cuda-webshader](https://github.com/SamG-Coder/cuda-webshader): CUDA source → generated WGSL → WebGPU. JavaScript handles DOM controls, asset decoding, resources, dispatch and presentation. The active application has no WebGL, Three.js, handwritten WGSL, CPU wave simulation or CPU FFT.
@@ -74,6 +78,8 @@ This is a linear spectral height-field ocean. It does not simulate overturning b
 The optical design is reimplemented, not a pixel-identical port: the lens uses three representative wavelengths, and compute filtering replaces WebGL derivatives and texture mipmaps. The unused original WebGL application, old media/tools and unused vendor helpers have been removed; they remain available in Git history. The browser targets CUDA WebShader, while `Native/main.cu` directly includes the same kernels for native CUDA execution.
 
 ## Actions and Pages
+
+Published site: **[samg-coder.github.io/clearwater](https://samg-coder.github.io/clearwater/)**.
 
 `npm run build` stages the browser entry, all 37 required JavaScript modules, shared CUDA source, seabed asset and licenses into `dist/`, with relative URLs and `.nojekyll` for Pages. The Pages workflow checks and builds pull requests, and deploys pushes to `main`. The Windows workflow builds a native CUDA package and uploads it as `ClearwaterNative-Windows-x64`; hosted runners compile it but do not run the GPU smoke test.
 
