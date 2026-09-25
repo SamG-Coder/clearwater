@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "test": "node scripts/verify.mjs"
   },

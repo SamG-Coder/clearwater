@@ -8,6 +8,8 @@ All simulation and image formation lives in [`src/clearwater.cu`](src/clearwater
 
 ## Run
 
+The browser version and the Windows native application share `src/clearwater.cu`. For the native build with a separate control window, see [`Native/README.md`](Native/README.md).
+
 Requires Node.js 20+ and a browser with WebGPU enabled. Serve over localhost or HTTPS.
 
 ```powershell
@@ -53,7 +55,7 @@ npm test
 `npm test` launches installed Microsoft Edge through Playwright with WebGPU. The validation port is 5186. Latest evidence is in [`previews/verification.json`](previews/verification.json).
 
 - All 20 CUDA entries compile through the vendored CUDA frontend.
-- The same `.cu` file also compiled to native PTX with NVIDIA CUDA Toolkit 13.3 (`nvcc -ptx`); native execution was not tested and no native application host is included.
+- The native application built with CUDA Toolkit 13.3 and passed its GPU smoke test on an RTX 5080: FFT error **2.47e-7**, ripple generation, 6x Shift boost, separate windows, resizing, diagnostic views and finite values at 10 km. See [`previews/native-smoke.json`](previews/native-smoke.json). Full manual control-window QA remains incomplete.
 - GPU 2D FFT compared against five analytic Fourier modes across both axes, all three cascades and both complex fields: maximum absolute error **3.89e-7**.
 - Forward/inverse round trip error: **2.99e-7**.
 - RGB caustic mean energy: **0.9922** (small fixed-point splat truncation loss).
@@ -69,7 +71,11 @@ npm test
 
 This is a linear spectral height-field ocean. It does not simulate overturning breakers, spray, volumetric water or an underwater camera. Shallow caustics are driven by the short-wave cascade at the selected mean depth, with local ripple curvature added during shading; the long-wave cascades are not included in the photon map. The caustic map and seabed remain periodic. Distant headlands are a procedural sky silhouette, not traversable terrain.
 
-The optical design is reimplemented, not a pixel-identical port: the lens uses three representative wavelengths, and compute filtering replaces WebGL derivatives and texture mipmaps. The original web application and README are preserved in [`upstream/`](upstream/) for comparison. This project targets the CUDA WebShader subset and browser runtime; it is not a standalone native CUDA executable.
+The optical design is reimplemented, not a pixel-identical port: the lens uses three representative wavelengths, and compute filtering replaces WebGL derivatives and texture mipmaps. The unused original WebGL application, old media/tools and unused vendor helpers have been removed; they remain available in Git history. The browser targets CUDA WebShader, while `Native/main.cu` directly includes the same kernels for native CUDA execution.
+
+## Actions and Pages
+
+`npm run build` stages the browser entry, all 37 required JavaScript modules, shared CUDA source, seabed asset and licenses into `dist/`, with relative URLs and `.nojekyll` for Pages. The Pages workflow checks and builds pull requests, and deploys pushes to `main`. The Windows workflow builds a native CUDA package and uploads it as `ClearwaterNative-Windows-x64`; hosted runners compile it but do not run the GPU smoke test.
 
 ## Provenance
 

@@ -7,3 +7,6 @@ node_modules/
 previews/*log
 previews/*.ptx
 previews/export.png
+dist/
+Native/build/
+Native/output/
