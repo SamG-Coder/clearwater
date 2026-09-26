@@ -7,10 +7,18 @@ const state = {
   z: 0,
   y: 1.55,
   yaw: 0,
-  pitch: -0.4,
+  pitch: -0.24,
   speed: 2.2,
   time: q.has("t") ? Number(q.get("t")) : 0,
   playing: !q.has("t"),
+  weatherAge: -1,
+  weatherRate: 30,
+  stormStrength: 1,
+  wind: 5,
+  rain: 0,
+  clouds: 0.28,
+  direction: 0.64,
+  buoy: false,
   frames: 0,
 };
 const diag = (window.clearwaterDiagnostics = {
@@ -21,6 +29,12 @@ const diag = (window.clearwaterDiagnostics = {
   cascades: [4.6, 37, 293],
   fftSize: 256,
 });
+let weather,
+  spectralEnergy,
+  foam,
+  foamIndex = 0,
+  weatherDt = 0,
+  frameDt = 0;
 let rt,
   ctx,
   k = {},
@@ -88,7 +102,7 @@ $("reset").onclick = () =>
     z: 0,
     y: 1.55,
     yaw: 0,
-    pitch: -0.4,
+    pitch: -0.24,
     speed: 2.2,
   });
 for (const button of document.querySelectorAll("[data-preset]"))
@@ -97,12 +111,31 @@ for (const button of document.querySelectorAll("[data-preset]"))
     $("energy").value = open ? 2.4 : 1;
     $("depth").value = open ? 12 : 1.6;
     state.y = open ? 3 : 1.55;
-    state.pitch = open ? -0.19 : -0.4;
+    state.pitch = open ? -0.19 : -0.24;
     document
       .querySelectorAll("[data-preset]")
       .forEach((b) => b.classList.toggle("active", b === button));
     labels();
   };
+$("storm").onclick = () => {
+  state.weatherAge = 0;
+  play(true);
+};
+$("clearWeather").onclick = () => {
+  state.weatherAge = -1;
+  state.wind = 5;
+  state.rain = 0;
+  state.clouds = 0.28;
+  $("wind").value = 5;
+  $("rain").value = 0;
+  $("clouds").value = 0.28;
+};
+for (const id of ["wind", "rain", "clouds", "direction", "stormStrength"])
+  $(id).oninput = () => {
+    state[id] = +$(id).value;
+  };
+$("weatherRate").onchange = () => (state.weatherRate = +$("weatherRate").value);
+$("buoy").onchange = () => (state.buoy = $("buoy").checked);
 let drag = null;
 canvas.onpointerdown = (e) => {
   drag = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY };
@@ -176,9 +209,31 @@ async function resize() {
 }
 function waves(batch) {
   batch.dispatch(
+    k.weather_update.bind(
+      { weather },
+      {
+        age: state.weatherAge,
+        direction: state.direction,
+        strength: state.stormStrength,
+        wind: state.wind,
+        rain: state.rain,
+        clouds: state.clouds,
+        dt: weatherDt,
+        camX: state.x,
+        camZ: state.z,
+      },
+    ),
+    [1, 1, 1],
+  );
+  batch.dispatch(
     k.evolve_spectrum.bind(
-      { seed, scales, output: fft[0] },
-      { time: state.time, sea: +$("energy").value, depth: +$("depth").value },
+      { seed, scales, output: fft[0], weather, spectralEnergy },
+      {
+        time: state.time,
+        sea: +$("energy").value,
+        depth: +$("depth").value,
+        weatherDt,
+      },
     ),
     WG,
   );
@@ -195,6 +250,19 @@ function waves(batch) {
       src = 1 - src;
     }
   batch.dispatch(k.resolve_surface.bind({ input: fft[src], surface }), WG);
+  batch.dispatch(
+    k.foam_step.bind(
+      {
+        surface,
+        previous: foam[foamIndex],
+        next: foam[1 - foamIndex],
+        weather,
+      },
+      { dt: frameDt },
+    ),
+    RG,
+  );
+  foamIndex = 1 - foamIndex;
 }
 function ripples(batch, dt) {
   accumulator = Math.min(0.1, accumulator + dt);
@@ -209,7 +277,7 @@ function ripples(batch, dt) {
     centerZ = nz;
     batch.dispatch(
       k.ripple_step.bind(
-        { previous: rip[ripIndex], next: rip[1 - ripIndex] },
+        { previous: rip[ripIndex], next: rip[1 - ripIndex], weather },
         {
           shiftX,
           shiftZ,
@@ -224,6 +292,7 @@ function ripples(batch, dt) {
           tapX: tap?.[0] || 0,
           tapY: tap?.[1] || 0,
           drop: tap ? 1 : 0,
+          time: state.time - accumulator + i / 120,
         },
       ),
       RG,
@@ -290,7 +359,15 @@ function render() {
     .dispatch(k.filter_caustics.bind({ photons, caustics }), [64, 64, 1]);
   batch.dispatch(
     k.render_water.bind(
-      { surface, rip: ripNormals, caustics, pebbles, hdr },
+      {
+        surface,
+        rip: ripNormals,
+        caustics,
+        pebbles,
+        hdr,
+        weather,
+        foam: foam[foamIndex],
+      },
       {
         width,
         height,
@@ -304,6 +381,7 @@ function render() {
         depth: +$("depth").value,
         time: state.time,
         view: +$("view").value,
+        buoy: state.buoy ? 1 : 0,
       },
     ),
     grid,
@@ -404,7 +482,22 @@ async function frame(now) {
         0.65,
         state.y + speed * (Math.sin(state.pitch) * forward + up),
       );
-      if (state.playing) state.time += dt;
+      frameDt = state.playing ? dt : 0;
+      weatherDt = frameDt * state.weatherRate;
+      if (state.playing) {
+        state.time += dt;
+        if (state.weatherAge >= 0) state.weatherAge += weatherDt;
+      }
+      $("weatherPhase").textContent =
+        state.weatherAge < 0
+          ? "FAIR WEATHER"
+          : state.weatherAge < 400
+            ? "FRONT APPROACHING"
+            : state.weatherAge < 1200
+              ? "SQUALL PASSING"
+              : state.weatherAge < 2100
+                ? "CLEARING / RESIDUAL SWELL"
+                : "AFTER THE STORM";
       const batch = rt.batch();
       waves(batch);
       ripples(batch, state.playing ? dt : 0);
@@ -440,11 +533,47 @@ async function exclusive(fn) {
 window.clearwaterLab = {
   state,
   pause: () => play(false),
+  async weatherInspect() {
+    return exclusive(async () => ({
+      weather: Array.from(await rt.read(weather)),
+      spectrum: Array.from(await rt.read(spectralEnergy)).reduce(
+        (a, v) => ({
+          min: Math.min(a.min, v),
+          max: Math.max(a.max, v),
+          finite: a.finite && Number.isFinite(v),
+        }),
+        { min: Infinity, max: -Infinity, finite: true },
+      ),
+      foamPeak: Math.max(
+        ...(await rt.read(foam[foamIndex])).filter((_, i) => i % 4 === 0),
+      ),
+    }));
+  },
+  async weatherAdvance(seconds) {
+    return exclusive(async () => {
+      play(false);
+      for (let i = 0; i < Math.ceil(seconds); i++) {
+        frameDt = 1 / 30;
+        weatherDt = 1;
+        if (state.weatherAge >= 0) state.weatherAge += 1;
+        state.time += 1 / 30;
+        const batch = rt.batch();
+        waves(batch);
+        ripples(batch, 1 / 30);
+        batch.submit();
+        if (i % 30 === 0) await rt.idle();
+      }
+      frameDt = weatherDt = 0;
+      render();
+      await rt.idle();
+    });
+  },
   resume: () => play(true),
   async inspect() {
     return exclusive(async () => {
       const a = await rt.read(surface),
         r = await rt.read(rip[ripIndex]);
+      const bandSquares = [0, 0, 0];
       let min = Infinity,
         max = -Infinity,
         sum = 0,
@@ -456,6 +585,7 @@ window.clearwaterLab = {
           min = Math.min(min, a[i]);
           max = Math.max(max, a[i]);
           sum += a[i] * a[i];
+          bandSquares[Math.floor(i / (65536 * 4))] += a[i] * a[i];
         }
       }
       for (let i = 0; i < r.length; i += 4)
@@ -465,6 +595,7 @@ window.clearwaterLab = {
         min,
         max,
         rms: Math.sqrt(sum / (3 * 65536)),
+        bandRms: bandSquares.map((v) => Math.sqrt(v / 65536)),
         ripplePeak,
         adapter: rt.describe(),
         errors: diag.errors,
@@ -475,6 +606,7 @@ window.clearwaterLab = {
   async seek(t) {
     return exclusive(async () => {
       state.time = t;
+      frameDt = weatherDt = 0;
       play(false);
       const b = rt.batch();
       waves(b);
@@ -603,6 +735,9 @@ try {
         : [8, 8, 1],
     });
   }
+  weather = rt.createBuffer(2 * 16);
+  spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
+  foam = [rt.createBuffer(65536 * 16), rt.createBuffer(65536 * 16)];
   lensKernel = rt.createBuffer(3 * 65536 * 16);
   lensFFT = [rt.createBuffer(3 * 65536 * 16), rt.createBuffer(3 * 65536 * 16)];
   seed = rt.createBuffer(3 * 65536 * 8);

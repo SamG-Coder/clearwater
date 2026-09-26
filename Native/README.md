@@ -23,6 +23,7 @@ The default architecture is the installed GPU. For a distributable forward-compa
 - Click nearby water to add ripples. Space pauses the waves.
 - H hides/restores the controls window. Closing only the controls hides it; closing the water view or pressing Escape exits.
 - The separate panel exposes presets, energy, depth, exposure, flight speed, resolution, water/caustic/normal views, lens glare, continuous drift, pause, reset and PNG export.
+- The Weather column adds **Send a storm**, **Clear skies**, wind/rain/cloud/direction/strength sliders, real-time or 30x weather evolution, and an optional surface-following buoy. The default showcase peaks near the starting point after about 30 seconds; waves retain energy as the front clears.
 - Save PNG writes a timestamped file under `output/` beside the executable.
 
 CUDA renders the complete image into a device buffer. CUDA–D3D11 interop transfers it to a registered GPU texture, and Direct3D copies it to the swap chain. There are no native vertex/pixel shaders and no per-frame CPU image readback. Windows/WIC only provide windows, controls, asset decoding and explicit PNG export.
@@ -33,6 +34,6 @@ CUDA renders the complete image into a device buffer. CUDA–D3D11 interop trans
 ./Native/build/ClearwaterNative.exe --smoke
 ```
 
-The smoke run opens both windows, tests the shared FFT against analytic reference modes, tests fly-camera directions/speed, generates a ripple, verifies finite simulation/HDR values at 10 km coordinates, exercises resize/diagnostic/glare paths, and writes PNG captures plus `output/native-smoke.json`. A failure returns exit code 1 and writes `output/error.log`.
+The smoke run opens both windows, tests the shared FFT against analytic reference modes, tests fly-camera directions/speed, generates a ripple, verifies finite simulation/HDR values at 10 km coordinates, exercises resize/diagnostic/glare paths, tests storm growth, foam, finite storm optics and residual wave energy after the wind settles, and writes PNG captures plus `output/native-smoke.json` and `output/native-weather.json`. A failure returns exit code 1 and writes `output/error.log`.
 
-The browser and native hosts use the same 20 kernels, spectrum dimensions and optical settings. GPU float math/compiler differences can cause small image differences. The same height-field and extreme-distance precision limitations as the browser version apply.
+The browser and native hosts use the same 22 kernels, spectrum dimensions and optical settings. GPU float math/compiler differences can cause small image differences. The same height-field and extreme-distance precision limitations as the browser version apply.

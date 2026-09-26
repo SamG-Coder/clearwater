@@ -1,6 +1,6 @@
 # Clearwater — CUDA infinite water
 
-A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com/Aureliengmz/clearwater), extended with three FFT ocean scales and unrestricted camera travel.
+A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com/Aureliengmz/clearwater), extended with three FFT ocean scales, a moving weather front, and unrestricted camera travel.
 
 **[Launch the live demo](https://samg-coder.github.io/clearwater/)** · [Native Windows version](Native/README.md)
 
@@ -32,12 +32,27 @@ Open **http://localhost:5173**. For another port: `$env:PORT='5186'; npm start`.
 - Depth, exposure, resolution, caustic/normal diagnostics, lens glare and continuous drift are adjustable.
 - PNG saves the rendered image. `?t=5` opens at a fixed wave time.
 
+## A passing storm
+
+Click **Send a storm** and watch the horizon. The default showcase advances weather 30 times faster while the waves and rain continue moving at normal simulation speed. Near the starting position, the strongest conditions arrive after about 30 seconds, with clearing skies around 70 seconds. Select **Real time** for uncompressed weather evolution. **Clear skies** removes the storm forcing; the waves relax gradually.
+
+- A moving world-space storm band drives local rain, cloud cover, visibility and wind forcing at the camera.
+- A JONSWAP-shaped directional weighting redistributes energy in the short and medium FFT bands. Stored spectral energy responds gradually; decay is slower than growth, and the independent long swell is preserved.
+- Raindrops inject impulses into the existing 120 Hz ripple solver. Wind-slanted rain streaks and a distant rain veil make the rainfall visible.
+- Eight cloud layers approximate an atmospheric volume. Clouds dim sunlight and caustics, with the same sky sampled for water reflections. Lightning illuminates that sky and reflects across the waves.
+- Strong, elevated crests generate foam in a persistent GPU field, advected with wind drift and faded over time.
+- Wind, direction, storm strength, rain and cloud cover have separate controls. The optional marker buoy follows the sampled height and slope; it is a visual scale reference.
+
+![Passing storm](previews/weather-storm.png)
+
 ## CUDA pipeline
 
 | Stage | Implementation |
 |---|---|
 | Spectrum | Seeded Gaussian complex coefficients, directional spectral bumps and GPU RMS slope normalization |
-| Wave evolution | Gravity/capillary dispersion with finite-depth tanh(k·depth) |
+| Wave evolution | Gravity/capillary dispersion with finite-depth tanh(k·depth), per-mode wind-energy memory |
+| Weather | Moving storm band, lagged local wind, layered clouds, shadow attenuation, rain optics and reflected lightning |
+| Foam | Persistent 256² field, crest/slope source, wind advection and exponential decay |
 | Infinite surface | Three independently seeded 256² periodic cascades spanning 4.6 m, 37 m and 293 m, sampled in world space |
 | FFT | 16 Stockham butterfly passes per 2D transform, two packed complex fields; height and analytic slopes |
 | Interaction | 256² camera-relative ripple field, 16 m wide, fixed 120 Hz wave equation and integer-cell recentering |
@@ -54,12 +69,14 @@ The normal frame loop performs **zero GPU-to-CPU readbacks**. Explicit inspectio
 npm run check
 # Start the server on port 5186 in another terminal, then:
 npm test
+npm run test:weather
 ```
 
 `npm test` launches installed Microsoft Edge through Playwright with WebGPU. The validation port is 5186. Latest evidence is in [`previews/verification.json`](previews/verification.json).
 
-- All 20 CUDA entries compile through the vendored CUDA frontend.
+- All 22 CUDA entries compile through the vendored CUDA frontend.
 - The native application built with CUDA Toolkit 13.3 and passed its GPU smoke test on an RTX 5080: FFT error **2.47e-7**, ripple generation, 6x Shift boost, separate windows, resizing, diagnostic views and finite values at 10 km. See [`previews/native-smoke.json`](previews/native-smoke.json). Full manual control-window QA remains incomplete.
+- Weather validation passes in Edge/WebGPU and native CUDA: the medium-wave band RMS rises from **0.086 m to 0.194 m** in the recorded browser scenario, rain generates nonzero ripple heights, foam remains bounded, pause freezes both clocks, and stored wave energy remains elevated after the wind eases. See [`previews/weather-verification.json`](previews/weather-verification.json) and [`previews/native-weather.json`](previews/native-weather.json). These are implementation checks, not oceanographic calibration.
 - GPU 2D FFT compared against five analytic Fourier modes across both axes, all three cascades and both complex fields: maximum absolute error **3.89e-7**.
 - Forward/inverse round trip error: **2.99e-7**.
 - RGB caustic mean energy: **0.9922** (small fixed-point splat truncation loss).
@@ -72,6 +89,8 @@ npm test
 ## Scope and tradeoffs
 
 “Infinite” means there is no finite mesh edge or camera travel boundary. The wave fields remain periodic, as FFT oceans are; combining three scales reduces obvious repetition. It is not an infinitely large stored simulation. World coordinates and GPU math use 32-bit floats, so precision eventually deteriorates at extreme travel distances; 10 km coordinates are covered by the test.
+
+The weather system is a visual, physically motivated approximation, not a forecast or a calibrated wind/fetch model. Wind forcing is uniform across the FFT tiles and sampled from the front at the camera; spatial gust shading does not solve local fluid momentum. Foam uses a slope/height heuristic, clouds use layered density integration, and the buoy uses surface-following animation rather than rigid-body buoyancy.
 
 This is a linear spectral height-field ocean. It does not simulate overturning breakers, spray, volumetric water or an underwater camera. Shallow caustics are driven by the short-wave cascade at the selected mean depth, with local ripple curvature added during shading; the long-wave cascades are not included in the photon map. The caustic map and seabed remain periodic. Distant headlands are a procedural sky silhouette, not traversable terrain.
 

@@ -34,12 +34,14 @@ template<class T> struct Buffer {
   void alloc(size_t n){if(p)check(cudaFree(p));p=nullptr;count=n;check(cudaMalloc((void**)&p,n*sizeof(T)));check(cudaMemset(p,0,n*sizeof(T)));}
   std::vector<T> read(){std::vector<T> v(count);check(cudaMemcpy(v.data(),p,count*sizeof(T),cudaMemcpyDeviceToHost));return v;}
 };
-struct Camera {float x=0,z=0,y=1.55f,yaw=0,pitch=-.4f,speed=2.2f;};
-enum {Clear=100,Open,Energy,Depth,Exposure,Speed,Quality,View,Glare,Cruise,Pause,Reset,Capture};
+struct Camera {float x=0,z=0,y=1.55f,yaw=0,pitch=-.24f,speed=2.2f;};
+enum {Clear=100,Open,Energy,Depth,Exposure,Speed,Quality,View,Glare,Cruise,Pause,Reset,Capture,Storm,Fair,Wind,Rain,Clouds,Direction,Strength,WeatherRate,Buoy};
 struct App {
  HWND water=nullptr,controls=nullptr,status=nullptr,stats=nullptr;
  HWND energyLabel=nullptr,depthLabel=nullptr,exposureLabel=nullptr,speedLabel=nullptr;
  HFONT font=nullptr,heading=nullptr;HBRUSH background=nullptr;
+ float weatherAge=-1,weatherRate=30,wind=5,rain=0,clouds=.28f,direction=.64f,strength=1;bool buoy=false;int foamIndex=0;
+ Buffer<float4> weather,foam[2];Buffer<float> spectralEnergy;
  Camera cam;float energy=1,depth=1.6f,exposure=1.1f,time=0,cx=0,cz=0,accumulator=0;
  bool playing=true,glare=true,cruise=false,running=true,drag=false,tap=false,capture=false,resizePending=true;
  bool keys[256]={};POINT previous{},start{};float tapX=0,tapY=0;int quality=1152,view=0,width=0,height=0,ripIndex=0,frames=0;
@@ -68,6 +70,7 @@ struct App {
  }
  void transform(float4* a,float4* b,float sign){for(int axis=0;axis<2;axis++)for(int p=1;p<256;p*=2){fft_pass<<<wavesGrid,block>>>(a,b,p,axis,sign);std::swap(a,b);}}
  void initGpu(){
+  weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(65536);
   seed.alloc(3*65536);rows.alloc(768);scales.alloc(3);surface.alloc(3*65536);ripNormals.alloc(65536);photons.alloc(512*512*3);caustics.alloc(512*512);lensKernel.alloc(3*65536);
   for(int i=0;i<2;i++){fft[i].alloc(3*65536);rip[i].alloc(65536);lens[i].alloc(3*65536);}
   decodeAsset();seed_spectrum<<<wavesGrid,block>>>(seed.p,7);spectrum_rows<<<12,64>>>(seed.p,rows.p);spectrum_norm<<<1,64>>>(rows.p,scales.p);
@@ -88,16 +91,18 @@ struct App {
   cam.x+=step*(std::sin(cam.yaw)*std::cos(cam.pitch)*f+std::cos(cam.yaw)*s);cam.z+=step*(-std::cos(cam.yaw)*std::cos(cam.pitch)*f+std::sin(cam.yaw)*s);cam.y=std::max(.65f,cam.y+step*(std::sin(cam.pitch)*f+u));
  }
  void step(float dt){
-  move(dt);if(playing)time+=dt;
-  evolve_spectrum<<<wavesGrid,block>>>(seed.p,scales.p,fft[0].p,time,energy,depth);transform(fft[0].p,fft[1].p,1);resolve_surface<<<wavesGrid,block>>>(fft[0].p,surface.p);
+  move(dt);float weatherDt=playing?dt*weatherRate:0;if(playing){time+=dt;if(weatherAge>=0)weatherAge+=weatherDt;}
+  weather_update<<<1,1>>>(weather.p,weatherAge,direction,strength,wind,rain,clouds,weatherDt,cam.x,cam.z);
+  evolve_spectrum<<<wavesGrid,block>>>(seed.p,scales.p,fft[0].p,time,energy,depth,weather.p,spectralEnergy.p,weatherDt);transform(fft[0].p,fft[1].p,1);resolve_surface<<<wavesGrid,block>>>(fft[0].p,surface.p);
+  foam_step<<<ripGrid,block>>>(surface.p,foam[foamIndex].p,foam[1-foamIndex].p,weather.p,playing?dt:0);foamIndex=1-foamIndex;
   if(playing)accumulator=std::min(.1f,accumulator+dt);
   while(accumulator>=1.f/120){float nx=std::round(cam.x*16)/16,nz=std::round(cam.z*16)/16;int sx=(int)std::round((nx-cx)*16),sz=(int)std::round((nz-cz)*16);cx=nx;cz=nz;
-   ripple_step<<<ripGrid,block>>>(rip[ripIndex].p,rip[1-ripIndex].p,sx,sz,cx,cz,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,float(width)/height,tapX,tapY,tap?1:0);tap=false;ripIndex=1-ripIndex;accumulator-=1.f/120;
+   ripple_step<<<ripGrid,block>>>(rip[ripIndex].p,rip[1-ripIndex].p,sx,sz,cx,cz,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,float(width)/height,tapX,tapY,tap?1:0,weather.p,time-accumulator);tap=false;ripIndex=1-ripIndex;accumulator-=1.f/120;
   }ripple_normals<<<ripGrid,block>>>(rip[ripIndex].p,ripNormals.p);
  }
  void draw(){
   dim3 grid(width/8,height/8,1);clear_caustics<<<dim3(64,64,1),block>>>(photons.p);trace_caustics<<<dim3(128,128,1),block>>>(surface.p,photons.p,depth);filter_caustics<<<dim3(64,64,1),block>>>(photons.p,caustics.p);
-  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view);
+  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view,weather.p,foam[foamIndex].p,buoy?1:0);
   if(glare){glare_source<<<wavesGrid,block>>>(hdr.p,lens[0].p,width,height);transform(lens[0].p,lens[1].p,-1);glare_multiply<<<wavesGrid,block>>>(lens[0].p,lensKernel.p,lens[1].p);transform(lens[1].p,lens[0].p,1);}
   bloom_pass<<<grid,block>>>(hdr.p,bloom[0].p,width,height,0);bloom_pass<<<grid,block>>>(bloom[0].p,bloom[1].p,width,height,1);present<<<grid,block>>>(hdr.p,bloom[1].p,lens[1].p,pixels.p,width,height,exposure,glare?1:0);check(cudaGetLastError());
   check(cudaGraphicsMapResources(1,&shared));cudaArray_t array;check(cudaGraphicsSubResourceGetMappedArray(&array,shared,0,0));check(cudaMemcpy2DToArray(array,0,0,pixels.p,width*4,width*4,height,cudaMemcpyDeviceToDevice));check(cudaGraphicsUnmapResources(1,&shared));ComPtr<ID3D11Texture2D> back;hr(swap->GetBuffer(0,IID_PPV_ARGS(back.GetAddressOf())));context->CopyResource(back.Get(),texture.Get());hr(swap->Present(1,0));
@@ -106,7 +111,7 @@ struct App {
   auto bytes=pixels.read();for(auto &pixel:bytes)pixel=(pixel&0xff00ff00u)|((pixel&0xffu)<<16)|((pixel>>16)&0xffu);ComPtr<IWICImagingFactory> wic;hr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(wic.GetAddressOf())));ComPtr<IWICStream> stream;hr(wic->CreateStream(stream.GetAddressOf()));hr(stream->InitializeFromFilename(path.c_str(),GENERIC_WRITE));ComPtr<IWICBitmapEncoder> encoder;hr(wic->CreateEncoder(GUID_ContainerFormatPng,nullptr,encoder.GetAddressOf()));hr(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache));ComPtr<IWICBitmapFrameEncode> frame;ComPtr<IPropertyBag2> props;hr(encoder->CreateNewFrame(frame.GetAddressOf(),props.GetAddressOf()));hr(frame->Initialize(props.Get()));hr(frame->SetSize(width,height));WICPixelFormatGUID format=GUID_WICPixelFormat32bppBGRA;hr(frame->SetPixelFormat(&format));if(format!=GUID_WICPixelFormat32bppBGRA)throw std::runtime_error("PNG encoder did not accept BGRA.");hr(frame->WritePixels(height,width*4,(UINT)(bytes.size()*4),(BYTE*)bytes.data()));hr(frame->Commit());hr(encoder->Commit());SetWindowTextW(status,(L"Saved "+path.filename().wstring()).c_str());
  }
  HWND control(const wchar_t* cls,const wchar_t* text,int id,int x,int y,int w,int h,DWORD style=0){HWND child=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,x,y,w,h,controls,(HMENU)(INT_PTR)id,GetModuleHandleW(nullptr),nullptr);if(!child)throw std::runtime_error("Could not create a native control.");SendMessageW(child,WM_SETFONT,(WPARAM)font,TRUE);return child;}
- HWND slider(const wchar_t* title,int id,int y,int low,int high){auto label=control(L"STATIC",title,0,24,y,300,22);auto h=control(TRACKBAR_CLASSW,L"",id,20,y+25,300,28,TBS_HORZ|TBS_NOTICKS|WS_TABSTOP);SendMessageW(h,TBM_SETRANGE,TRUE,MAKELONG(low,high));return label;}
+ HWND slider(const wchar_t* title,int id,int y,int low,int high,int x=24){auto label=control(L"STATIC",title,0,x,y,300,22);auto h=control(TRACKBAR_CLASSW,L"",id,x-4,y+25,300,28,TBS_HORZ|TBS_NOTICKS|WS_TABSTOP);SendMessageW(h,TBM_SETRANGE,TRUE,MAKELONG(low,high));return label;}
  void labels(){if(!controls)return;wchar_t text[128];swprintf_s(text,L"Wave energy                     %.2f",energy);SetWindowTextW(energyLabel,text);swprintf_s(text,L"Water depth                      %.1f m",depth);SetWindowTextW(depthLabel,text);swprintf_s(text,L"Exposure                           %.2f",exposure);SetWindowTextW(exposureLabel,text);swprintf_s(text,L"Flight speed                      %.1f m/s",cam.speed);SetWindowTextW(speedLabel,text);
   SendDlgItemMessageW(controls,Energy,TBM_SETPOS,TRUE,(LPARAM)std::lround(energy*100));SendDlgItemMessageW(controls,Depth,TBM_SETPOS,TRUE,(LPARAM)std::lround(depth*10));SendDlgItemMessageW(controls,Exposure,TBM_SETPOS,TRUE,(LPARAM)std::lround(exposure*100));SendDlgItemMessageW(controls,Speed,TBM_SETPOS,TRUE,(LPARAM)std::lround(std::log(cam.speed/.1f)/std::log(2000.f)*1000));SetDlgItemTextW(controls,Pause,playing?L"Pause":L"Resume");
  }
@@ -120,24 +125,42 @@ struct App {
   auto v=control(L"COMBOBOX",L"",View,176,455,142,180,CBS_DROPDOWNLIST|WS_TABSTOP);for(auto s:{L"Water",L"Caustics",L"Normals"})SendMessageW(v,CB_ADDSTRING,0,(LPARAM)s);SendMessageW(v,CB_SETCURSEL,0,0);
   control(L"BUTTON",L"Lens glare",Glare,24,497,140,24,BS_AUTOCHECKBOX|WS_TABSTOP);SendDlgItemMessageW(controls,Glare,BM_SETCHECK,BST_CHECKED,0);control(L"BUTTON",L"Drift forward",Cruise,176,497,142,24,BS_AUTOCHECKBOX|WS_TABSTOP);
   control(L"BUTTON",L"Pause",Pause,24,537,90,32,WS_TABSTOP);control(L"BUTTON",L"Reset view",Reset,125,537,92,32,WS_TABSTOP);control(L"BUTTON",L"Save PNG",Capture,228,537,90,32,WS_TABSTOP);
-  control(L"STATIC",L"Drag / arrows: look   |   WASD: fly\nE / Q: up / down   |   Shift: 6x boost\nScroll: speed   |   Space: pause   |   H: controls",0,24,591,300,62);stats=control(L"STATIC",L"Starting CUDA...",0,24,666,300,52);status=control(L"STATIC",L"Shared CUDA kernels. GPU-only presentation.",0,24,728,300,40);labels();
+  control(L"STATIC",L"Drag / arrows: look   |   WASD: fly\nE / Q: up / down   |   Shift: 6x boost\nScroll: speed   |   Space: pause   |   H: controls",0,24,591,300,62);stats=control(L"STATIC",L"Starting CUDA...",0,24,666,300,52);status=control(L"STATIC",L"Shared CUDA kernels. GPU-only presentation.",0,24,728,300,40);
+  control(L"STATIC",L"WEATHER / A PASSING SQUALL",0,360,28,300,24);
+  control(L"STATIC",L"Wind builds waves gradually.\nFoam and swell linger as skies clear.",0,360,68,300,45);
+  control(L"BUTTON",L"Send a storm",Storm,360,125,142,32,WS_TABSTOP);control(L"BUTTON",L"Clear skies",Fair,512,125,142,32,WS_TABSTOP);
+  slider(L"Background wind (3-24 m/s)",Wind,183,30,240,360);slider(L"Rain",Rain,248,0,100,360);slider(L"Cloud cover",Clouds,313,0,90,360);slider(L"Wind direction",Direction,378,-314,314,360);slider(L"Storm strength",Strength,443,20,100,360);
+  auto rate=control(L"COMBOBOX",L"",WeatherRate,360,526,294,120,CBS_DROPDOWNLIST|WS_TABSTOP);SendMessageW(rate,CB_ADDSTRING,0,(LPARAM)L"Showcase - weather 30x faster");SendMessageW(rate,CB_ADDSTRING,0,(LPARAM)L"Real time");SendMessageW(rate,CB_SETCURSEL,0,0);
+  control(L"BUTTON",L"Floating buoy",Buoy,360,576,294,24,BS_AUTOCHECKBOX|WS_TABSTOP);SendDlgItemMessageW(controls,Buoy,BM_SETCHECK,BST_UNCHECKED,0);
+  SendDlgItemMessageW(controls,Wind,TBM_SETPOS,TRUE,50);SendDlgItemMessageW(controls,Clouds,TBM_SETPOS,TRUE,28);SendDlgItemMessageW(controls,Direction,TBM_SETPOS,TRUE,64);SendDlgItemMessageW(controls,Strength,TBM_SETPOS,TRUE,100);labels();
  }
  void command(int id,int notification){
-  if(id==Clear||id==Open){energy=id==Open?2.4f:1;depth=id==Open?12:1.6f;cam.y=id==Open?3:1.55f;cam.pitch=id==Open?-.19f:-.4f;}
+  if(id==Storm){weatherAge=0;playing=true;}if(id==Fair){weatherAge=-1;wind=5;rain=0;clouds=.28f;SendDlgItemMessageW(controls,Wind,TBM_SETPOS,TRUE,50);SendDlgItemMessageW(controls,Rain,TBM_SETPOS,TRUE,0);SendDlgItemMessageW(controls,Clouds,TBM_SETPOS,TRUE,28);}
+  if(id==Buoy)buoy=SendDlgItemMessageW(controls,Buoy,BM_GETCHECK,0,0)==BST_CHECKED;
+  if(id==WeatherRate&&notification==CBN_SELCHANGE)weatherRate=SendDlgItemMessageW(controls,WeatherRate,CB_GETCURSEL,0,0)==0?30.f:1.f;
+  if(id==Clear||id==Open){energy=id==Open?2.4f:1;depth=id==Open?12:1.6f;cam.y=id==Open?3:1.55f;cam.pitch=id==Open?-.19f:-.24f;}
   if(id==Pause)playing=!playing;if(id==Reset)cam=Camera{};if(id==Capture)capture=true;
   if(id==Glare)glare=SendDlgItemMessageW(controls,Glare,BM_GETCHECK,0,0)==BST_CHECKED;if(id==Cruise)cruise=SendDlgItemMessageW(controls,Cruise,BM_GETCHECK,0,0)==BST_CHECKED;
   if(id==Quality&&notification==CBN_SELCHANGE){int sel=(int)SendDlgItemMessageW(controls,Quality,CB_GETCURSEL,0,0);quality=sel==0?768:sel==1?1152:1536;resizePending=true;}if(id==View&&notification==CBN_SELCHANGE)view=(int)SendDlgItemMessageW(controls,View,CB_GETCURSEL,0,0);labels();
  }
- void scrollControl(HWND h){int id=GetDlgCtrlID(h),v=(int)SendMessageW(h,TBM_GETPOS,0,0);if(id==Energy)energy=v/100.f;if(id==Depth)depth=v/10.f;if(id==Exposure)exposure=v/100.f;if(id==Speed)cam.speed=.1f*std::pow(2000.f,v/1000.f);labels();}
+ void scrollControl(HWND h){int id=GetDlgCtrlID(h),v=(int)SendMessageW(h,TBM_GETPOS,0,0);if(id==Wind)wind=v/10.f;if(id==Rain)rain=v/100.f;if(id==Clouds)clouds=v/100.f;if(id==Direction)direction=v/100.f;if(id==Strength)strength=v/100.f;if(id==Energy)energy=v/100.f;if(id==Depth)depth=v/10.f;if(id==Exposure)exposure=v/100.f;if(id==Speed)cam.speed=.1f*std::pow(2000.f,v/1000.f);labels();}
  void smoke(){
   auto require=[](bool yes,const char* s){if(!yes)throw std::runtime_error(s);};
   Buffer<float4> a,b;a.alloc(3*65536);b.alloc(3*65536);std::vector<float4> input(3*65536,make_float4(0,0,0,0));input[1].x=.5f;input[255].x=.5f;input[65536+7*256+3]=make_float4(.3f,-.2f,0,0);check(cudaMemcpy(a.p,input.data(),input.size()*sizeof(float4),cudaMemcpyHostToDevice));transform(a.p,b.p,1);auto result=a.read();double error=0;for(int z=0;z<256;z++)for(int x=0;x<256;x++){double angle=6.283185307179586*(3*x+7*z)/256;error=std::max(error,std::abs(result[z*256+x].x-std::cos(6.283185307179586*x/256)));error=std::max(error,std::abs(result[65536+z*256+x].x-(.3*std::cos(angle)+.2*std::sin(angle))));}require(error<1e-5,"Native FFT reference mismatch");
-  cam=Camera{};look(100,-100);require(cam.yaw>0&&cam.pitch>-.4f,"Camera direction mismatch");look(-100,100);float old=cam.speed;wheel(120);require(cam.speed>old,"Wheel speed mismatch");cam=Camera{};cam.y=4;cam.pitch=0;keys['D']=true;move(.1f);require(cam.x>0,"Strafe mismatch");keys['D']=false;keys['E']=true;move(.1f);require(cam.y>4,"Rise mismatch");keys['E']=false;cam=Camera{};cam.pitch=0;keys['W']=true;move(.1f);float base=cam.z;cam.z=0;keys[VK_SHIFT]=true;move(.1f);float ratio=cam.z/base;require(std::abs(ratio-6)<.001f,"Shift boost mismatch");std::fill(std::begin(keys),std::end(keys),false);cam=Camera{};
+  cam=Camera{};look(100,-100);require(cam.yaw>0&&cam.pitch>-.24f,"Camera direction mismatch");look(-100,100);float old=cam.speed;wheel(120);require(cam.speed>old,"Wheel speed mismatch");cam=Camera{};cam.y=4;cam.pitch=0;keys['D']=true;move(.1f);require(cam.x>0,"Strafe mismatch");keys['D']=false;keys['E']=true;move(.1f);require(cam.y>4,"Rise mismatch");keys['E']=false;cam=Camera{};cam.pitch=0;keys['W']=true;move(.1f);float base=cam.z;cam.z=0;keys[VK_SHIFT]=true;move(.1f);float ratio=cam.z/base;require(std::abs(ratio-6)<.001f,"Shift boost mismatch");std::fill(std::begin(keys),std::end(keys),false);cam=Camera{};
   playing=false;time=5;resize();step(0);draw();png(outputDir/L"native-clearwater.png");auto field=surface.read();for(auto f:field)require(std::isfinite(f.x)&&std::isfinite(f.y)&&std::isfinite(f.z),"Non-finite native wave field");
   playing=true;tap=true;tapX=.2f;tapY=-.6f;step(1.f/60);check(cudaDeviceSynchronize());auto ripData=rip[ripIndex].read();float peak=0;for(auto r:ripData)peak=std::max(peak,std::abs(r.x));require(peak>.00001f,"Native ripple was not generated");
   command(Open,BN_CLICKED);cam.x=10000;cam.z=-10000;time=20;playing=false;quality=768;resizePending=true;resize();step(0);draw();png(outputDir/L"native-open-water.png");
   for(int mode=1;mode<=2;mode++){view=mode;draw();}view=0;glare=false;draw();glare=true;draw();check(cudaDeviceSynchronize());require(IsWindow(water)&&IsWindow(controls)&&water!=controls,"Separate windows missing");
   auto image=hdr.read();for(auto c:image)require(std::isfinite(c.x)&&std::isfinite(c.y)&&std::isfinite(c.z),"Non-finite native HDR");
+  cam=Camera{};cam.pitch=-.17f;quality=1152;resizePending=true;resize();energy=1;depth=1.6f;time=5;command(Storm,0);
+  for(int i=0;i<900;i++)step(1.f/30);draw();png(outputDir/L"native-storm.png");
+  auto stormEnergy=spectralEnergy.read();float maxStorm=0;for(float e:stormEnergy){require(std::isfinite(e),"Non-finite storm spectrum");maxStorm=std::max(maxStorm,e);}require(maxStorm>2,"Storm did not grow waves");
+  auto stormFoam=foam[foamIndex].read();float maxFoam=0;for(auto f:stormFoam)maxFoam=std::max(maxFoam,f.x);require(maxFoam>.001f,"No storm foam generated");
+  auto stormImage=hdr.read();for(auto c:stormImage)require(std::isfinite(c.x)&&std::isfinite(c.y)&&std::isfinite(c.z),"Non-finite storm HDR");
+  command(Fair,0);for(int i=0;i<90;i++)step(1.f/30);auto residual=spectralEnergy.read();float maxResidual=0;for(float e:residual)maxResidual=std::max(maxResidual,e);require(maxResidual>1.1f&&maxResidual<maxStorm,"Wave memory/decay mismatch");
+  auto weatherState=weather.read();require(weatherState[0].x<7,"Wind failed to settle");
+  std::ofstream weatherLog(outputDir/L"native-weather.json");weatherLog<<"{\n  \"passed\": true,\n  \"peakSpectralEnergy\": "<<maxStorm<<",\n  \"residualSpectralEnergy\": "<<maxResidual<<",\n  \"foamPeak\": "<<maxFoam<<",\n  \"settledWind\": "<<weatherState[0].x<<"\n}\n";
   std::ofstream log(outputDir/L"native-smoke.json");log<<"{\n  \"passed\": true,\n  \"gpu\": \""<<gpuName<<"\",\n  \"fftMaxError\": "<<error<<",\n  \"shiftRatio\": "<<ratio<<",\n  \"ripplePeak\": "<<peak<<",\n  \"separateWindows\": true,\n  \"resizeAndDebugViews\": true,\n  \"finiteAt10km\": true,\n  \"gpuPresentation\": \"CUDA-D3D11 device-to-device\"\n}\n";
  }
 };
@@ -167,7 +190,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR commandLine,int){
   App instanceApp;app=&instanceApp;app->paths();INITCOMMONCONTROLSEX cc{sizeof(cc),ICC_BAR_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&cc);
   WNDCLASSEXW c{sizeof(c)};c.lpfnWndProc=windowProc;c.hInstance=instance;c.hCursor=LoadCursorW(nullptr,IDC_ARROW);c.lpszClassName=L"ClearwaterNativeWindow";c.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);RegisterClassExW(&c);
   app->water=CreateWindowExW(0,c.lpszClassName,L"Clearwater - Native CUDA",WS_OVERLAPPEDWINDOW,30,45,1040,760,nullptr,nullptr,instance,nullptr);
-  app->controls=CreateWindowExW(0,c.lpszClassName,L"Clearwater - Controls",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,1090,45,360,820,nullptr,nullptr,instance,nullptr);
+  app->controls=CreateWindowExW(0,c.lpszClassName,L"Clearwater - Controls",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,1090,45,700,820,nullptr,nullptr,instance,nullptr);
   if(!app->water||!app->controls)throw std::runtime_error("Could not create water and control windows.");app->controlsUi();ShowWindow(app->water,SW_SHOW);ShowWindow(app->controls,SW_SHOWNOACTIVATE);UpdateWindow(app->controls);
   app->graphics();app->initGpu();app->resize();bool smoke=std::wstring(commandLine).find(L"--smoke")!=std::wstring::npos;
   if(smoke){app->smoke();app->running=false;}

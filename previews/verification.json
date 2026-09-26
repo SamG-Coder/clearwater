@@ -27,6 +27,11 @@
     "min": -0.8635790348052979,
     "max": 0.8065742254257202,
     "rms": 0.21775979776158014,
+    "bandRms": [
+      0.011642258450401054,
+      0.0855348448398254,
+      0.36715968828275936
+    ],
     "ripplePeak": 0,
     "adapter": {
       "vendor": "nvidia",
@@ -36,10 +41,10 @@
       "features": [
         "core-features-and-limits",
         "subgroup-size-control",
-        "shader-f16",
+        "timestamp-query",
         "float32-filterable",
         "subgroups",
-        "timestamp-query"
+        "shader-f16"
       ],
       "timestampQuery": true,
       "limits": {
@@ -50,22 +55,27 @@
     },
     "errors": [],
     "stats": {
-      "pipelineCompiles": 20,
+      "pipelineCompiles": 22,
       "pipelineCacheHits": 0,
-      "bindGroupsCreated": 4592,
-      "submissions": 154,
-      "dispatches": 4592,
-      "uniformBytesUploaded": 1042032,
-      "dataBytesUploaded": 19922944,
+      "bindGroupsCreated": 3340,
+      "submissions": 108,
+      "dispatches": 3340,
+      "uniformBytesUploaded": 762288,
+      "dataBytesUploaded": 20709376,
       "readbackBytes": 34242560
     }
   },
   "ripple": {
     "finite": true,
-    "min": -0.8597536087036133,
-    "max": 0.8091076016426086,
-    "rms": 0.21765060319158208,
-    "ripplePeak": 0.009746883064508438,
+    "min": -0.8596770763397217,
+    "max": 0.8091533184051514,
+    "rms": 0.21764393228056408,
+    "bandRms": [
+      0.01061260023995934,
+      0.08547699592630523,
+      0.3669982284142541
+    ],
+    "ripplePeak": 0.009564938955008984,
     "adapter": {
       "vendor": "nvidia",
       "architecture": "blackwell",
@@ -74,10 +84,10 @@
       "features": [
         "core-features-and-limits",
         "subgroup-size-control",
-        "shader-f16",
+        "timestamp-query",
         "float32-filterable",
         "subgroups",
-        "timestamp-query"
+        "shader-f16"
       ],
       "timestampQuery": true,
       "limits": {
@@ -88,21 +98,26 @@
     },
     "errors": [],
     "stats": {
-      "pipelineCompiles": 20,
+      "pipelineCompiles": 22,
       "pipelineCacheHits": 0,
-      "bindGroupsCreated": 6232,
-      "submissions": 208,
-      "dispatches": 6232,
-      "uniformBytesUploaded": 1415216,
-      "dataBytesUploaded": 19922944,
+      "bindGroupsCreated": 3980,
+      "submissions": 128,
+      "dispatches": 3980,
+      "uniformBytesUploaded": 909008,
+      "dataBytesUploaded": 20709376,
       "readbackBytes": 38436864
     }
   },
   "distant": {
     "finite": true,
-    "min": -0.8482232093811035,
-    "max": 0.8832862377166748,
-    "rms": 0.21649399606847897,
+    "min": -0.8482337594032288,
+    "max": 0.8847165107727051,
+    "rms": 0.21648177048939332,
+    "bandRms": [
+      0.010343082431876345,
+      0.07308391930855983,
+      0.36762050030836674
+    ],
     "ripplePeak": 0,
     "adapter": {
       "vendor": "nvidia",
@@ -112,10 +127,10 @@
       "features": [
         "core-features-and-limits",
         "subgroup-size-control",
-        "shader-f16",
+        "timestamp-query",
         "float32-filterable",
         "subgroups",
-        "timestamp-query"
+        "shader-f16"
       ],
       "timestampQuery": true,
       "limits": {
@@ -126,13 +141,13 @@
     },
     "errors": [],
     "stats": {
-      "pipelineCompiles": 20,
+      "pipelineCompiles": 22,
       "pipelineCacheHits": 0,
-      "bindGroupsCreated": 14083,
-      "submissions": 466,
-      "dispatches": 14083,
-      "uniformBytesUploaded": 3202448,
-      "dataBytesUploaded": 19922944,
+      "bindGroupsCreated": 7564,
+      "submissions": 240,
+      "dispatches": 7564,
+      "uniformBytesUploaded": 1730640,
+      "dataBytesUploaded": 20709376,
       "readbackBytes": 42631168
     }
   },
@@ -141,6 +156,11 @@
     "min": -2.192516565322876,
     "max": 2.8713560104370117,
     "rms": 0.5841974574817105,
+    "bandRms": [
+      0.026930634863104493,
+      0.1850344243043646,
+      0.9944330096655603
+    ],
     "ripplePeak": 0,
     "adapter": {
       "vendor": "nvidia",
@@ -150,10 +170,10 @@
       "features": [
         "core-features-and-limits",
         "subgroup-size-control",
-        "shader-f16",
+        "timestamp-query",
         "float32-filterable",
         "subgroups",
-        "timestamp-query"
+        "shader-f16"
       ],
       "timestampQuery": true,
       "limits": {
@@ -164,13 +184,13 @@
     },
     "errors": [],
     "stats": {
-      "pipelineCompiles": 20,
+      "pipelineCompiles": 22,
       "pipelineCacheHits": 0,
-      "bindGroupsCreated": 19885,
-      "submissions": 658,
-      "dispatches": 19885,
-      "uniformBytesUploaded": 4520976,
-      "dataBytesUploaded": 19922944,
+      "bindGroupsCreated": 9903,
+      "submissions": 314,
+      "dispatches": 9903,
+      "uniformBytesUploaded": 2265664,
+      "dataBytesUploaded": 20709376,
       "readbackBytes": 46825472
     }
   },
@@ -191,11 +211,20 @@
       "y": 3,
       "yaw": 0,
       "pitch": -0.19,
+      "speed": 2.2,
       "time": 20,
       "playing": false,
-      "frames": 325
+      "weatherAge": -1,
+      "weatherRate": 30,
+      "stormStrength": 1,
+      "wind": 5,
+      "rain": 0,
+      "clouds": 0.28,
+      "direction": 0.64,
+      "buoy": false,
+      "frames": 153
     },
-    "frames": 325,
+    "frames": 153,
     "cascades": [
       4.6,
       37,
@@ -204,7 +233,7 @@
     "fftSize": 256,
     "width": 1152,
     "height": 720,
-    "frameMs": 3.4600000381469727,
+    "frameMs": 8.175000011920929,
     "readbackBytes": 42631168
   },
   "browserErrors": []

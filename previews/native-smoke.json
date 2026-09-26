@@ -3,7 +3,7 @@
   "gpu": "NVIDIA GeForce RTX 5080",
   "fftMaxError": 2.46356e-07,
   "shiftRatio": 6,
-  "ripplePeak": 0.0560605,
+  "ripplePeak": 0.0546699,
   "separateWindows": true,
   "resizeAndDebugViews": true,
   "finiteAt10km": true,

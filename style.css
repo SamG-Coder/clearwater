@@ -305,3 +305,40 @@ footer b {
     margin-top: 12px;
   }
 }
+
+#panel {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #8daea3 transparent;
+}
+.weather-controls {
+  border-top: 1px solid #ffffff30;
+  border-bottom: 1px solid #ffffff30;
+  padding: 14px 0;
+  margin: 18px 0;
+}
+.weather-heading {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: #c0d8d3;
+  margin-bottom: 12px;
+}
+.weather-controls select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+.weather-controls .presets {
+  margin-bottom: 8px;
+}
+.weather-controls details {
+  font-size: 10px;
+  color: #d0e3dd;
+}
+.weather-controls summary {
+  cursor: pointer;
+  padding: 8px 0;
+}

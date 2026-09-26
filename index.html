@@ -26,6 +26,70 @@
       <p class="eyebrow">01 / THE SURFACE</p>
       <h1>Room to drift.</h1>
       <p class="intro">Light through water.<br />Waves beyond the horizon.</p>
+      <section class="weather-controls">
+        <div class="weather-heading">
+          <span>02 / WEATHER</span><span id="weatherPhase">FAIR WEATHER</span>
+        </div>
+        <div class="presets">
+          <button id="storm">Send a storm ↗</button
+          ><button id="clearWeather">Clear skies</button>
+        </div>
+        <label
+          >Weather time<select id="weatherRate">
+            <option value="30">Showcase · 30× faster</option>
+            <option value="1">Real time</option>
+          </select></label
+        >
+        <details>
+          <summary>Weather controls</summary>
+          <label
+            >Wind · 3–24 m/s<input
+              id="wind"
+              type="range"
+              min="3"
+              max="24"
+              step="0.5"
+              value="5"
+          /></label>
+          <label
+            >Storm strength<input
+              id="stormStrength"
+              type="range"
+              min="0.2"
+              max="1"
+              step="0.05"
+              value="1"
+          /></label>
+          <label
+            >Front direction<input
+              id="direction"
+              type="range"
+              min="-3.14"
+              max="3.14"
+              step="0.01"
+              value="0.64"
+          /></label>
+          <label
+            >Rain<input
+              id="rain"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value="0"
+          /></label>
+          <label
+            >Cloud cover<input
+              id="clouds"
+              type="range"
+              min="0"
+              max="0.9"
+              step="0.01"
+              value="0.28"
+          /></label>
+        </details>
+        <label><input id="buoy" type="checkbox" /> Floating marker buoy</label>
+      </section>
       <div class="presets">
         <button data-preset="clear" class="active">Clearwater</button
         ><button data-preset="swell">Open water</button>
