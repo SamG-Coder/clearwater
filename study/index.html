@@ -1,12 +1,12 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clearwater · Reference study</title><link rel="icon" href="data:,"><link rel="stylesheet" href="style.css"></head><body>
-<main><header><a href="../">CLEARWATER</a><span>REFERENCE MATCH / WATER COMPONENT</span><b id="status">COMPILING</b></header>
-<div id="stage"><canvas id="render"></canvas><img id="reference" src="../references/jiangnan-pond-concept-v1.png" alt="Generated Jiangnan pond reference"><div id="divider"></div><div id="roi"></div><span id="caption">CUDA RENDER</span></div>
+<main><header><a href="../">CLEARWATER</a><span>REFERENCE MATCH / STONE BRIDGE</span><b id="status">COMPILING</b></header>
+<div id="stage"><canvas id="render"></canvas><img id="reference" src="../references/jiangnan-pond-concept-v1.png" alt="Generated Jiangnan pond reference"><div id="divider"></div><div id="roi"></div><div id="bridgeRoi"></div><span id="caption">CUDA RENDER</span></div>
 <footer>Both layers share the reference’s native pixel grid. Unbuilt scene context is gray in the render.<span id="resolution"></span></footer></main>
-<aside><h1>Match the<br>reference.</h1><p>Water first. Keep the camera and reference aligned while tuning the material.</p>
+<aside><h1>Match the<br>reference.</h1><p>Section 02: the arched stone bridge, landings and pond margins. Compare their silhouette against the reference.</p>
 <label>Comparison<select id="mode"><option value="overlay">Opacity overlay</option><option value="render">CUDA render only</option><option value="reference">Reference only</option><option value="wipe">Wipe comparison</option><option value="difference">Absolute RGB difference</option></select></label>
 <button id="zoom">Inspect at 1:1 pixels</button><label>Reference opacity <output id="opacityValue">50%</output><input id="opacity" type="range" min="0" max="1" step=".01" value=".5"></label>
 <label>Wipe position<input id="wipe" type="range" min="0" max="100" value="50"></label>
-<hr><h2>WATER & LIGHT</h2>
+<label><input id="stonework" type="checkbox" checked> Show stone bridge & pond edges</label><button id="bridgeMeasure">Measure bridge region</button><p id="bridgeMetric">Blue outline: bridge silhouette and stonework.</p><hr><h2>WATER & LIGHT</h2>
 <label>Water depth <output id="depthValue"></output><input id="depth" type="range" min=".1" max=".8" step=".01" value=".28"></label>
 <label>Ripple strength <output id="waveValue"></output><input id="wave" type="range" min=".05" max="1" step=".01" value=".32"></label>
 <label>Caustic contrast <output id="causticValue"></output><input id="caustic" type="range" min="0" max="3" step=".05" value="1.5"></label>

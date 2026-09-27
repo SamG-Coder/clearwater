@@ -16,6 +16,13 @@ try {
  const first=await page.evaluate(()=>studyLab.measure());await frames();const repeated=await page.evaluate(()=>studyLab.measure());
  assert(first.rowEdgesOpaque,'Padded rows must preserve opaque pixels at both image edges');
  assert(Number.isFinite(first.mae)&&first.mae>0&&first.mae<255);assert(Math.abs(first.mae-repeated.mae)<.01,'Paused frames must be repeatable');
+ const bridge=await page.evaluate(()=>studyLab.measure([.375,.285,.655,.44]));
+ const reflected=await page.evaluate(()=>studyLab.measure([.38,.45,.65,.64]));
+ await page.locator('#stonework').uncheck();await frames();const absent=await page.evaluate(()=>studyLab.measure([.375,.285,.655,.44]));
+ const noReflection=await page.evaluate(()=>studyLab.measure([.38,.45,.65,.64]));assert(Math.abs(reflected.mae-noReflection.mae)>.1,'Stonework must affect the water below the bridge');
+ assert(bridge.mae<absent.mae,'Stonework should improve the bridge region over absent geometry');
+ await page.locator('#stonework').check();await frames();
+ await page.click('#bridgeMeasure');await page.waitForFunction(()=>document.querySelector('#bridgeMetric').textContent.includes('MAE'));
  await page.screenshot({path:'previews/study-overlay.png'});
  await page.selectOption('#mode','render');assert.equal(await page.locator('#reference').evaluate(e=>e.style.opacity),'0');
  await page.screenshot({path:'previews/study-render.png'});
@@ -25,5 +32,5 @@ try {
  await page.locator('#exposure').fill('0.25');await frames();const changed=await page.evaluate(()=>studyLab.measure());assert(Math.abs(changed.mae-first.mae)>5,'Exposure control must affect the GPU output');
  await page.click('#reset');await page.click('#pause');await frames();assert(await page.evaluate(()=>studyLab.state.time>5));await page.click('#pause');const time=await page.evaluate(()=>studyLab.state.time);await frames();assert.equal(await page.evaluate(()=>studyLab.state.time),time);
  await page.click('#reset');await frames();assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>studyDiagnostics.errors),[]);
- const report={url:page.url(),geometry,first,repeated,changed,errors};await writeFile('previews/study-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify({mae:first.mae,rmse:first.rmse,errors,normalReadbackBytes:0}));
+ const report={url:page.url(),geometry,first,repeated,bridge,absent,reflected,noReflection,changed,errors};await writeFile('previews/study-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify({mae:first.mae,rmse:first.rmse,bridge:bridge.mae,withoutBridge:absent.mae,errors,normalReadbackBytes:0}));
 } finally {await browser.close();}

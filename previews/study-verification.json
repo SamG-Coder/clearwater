@@ -51,6 +51,7 @@
       "height": 0.9,
       "pitch": -0.27,
       "fov": 58,
+      "stonework": 1,
       "time": 5,
       "playing": false
     }
@@ -76,6 +77,111 @@
       "height": 0.9,
       "pitch": -0.27,
       "fov": 58,
+      "stonework": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "bridge": {
+    "rowEdgesOpaque": true,
+    "mae": 46.855516258964535,
+    "rmse": 58.288658569660676,
+    "region": [
+      0.375,
+      0.285,
+      0.655,
+      0.44
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "absent": {
+    "rowEdgesOpaque": true,
+    "mae": 55.03727281658316,
+    "rmse": 67.17672629163192,
+    "region": [
+      0.375,
+      0.285,
+      0.655,
+      0.44
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 0,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "reflected": {
+    "rowEdgesOpaque": true,
+    "mae": 37.23692051602164,
+    "rmse": 45.58841350269697,
+    "region": [
+      0.38,
+      0.45,
+      0.65,
+      0.64
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "noReflection": {
+    "rowEdgesOpaque": true,
+    "mae": 34.3341115272576,
+    "rmse": 42.795640789436064,
+    "region": [
+      0.38,
+      0.45,
+      0.65,
+      0.64
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 0,
       "time": 5,
       "playing": false
     }
@@ -101,6 +207,7 @@
       "height": 0.9,
       "pitch": -0.27,
       "fov": 58,
+      "stonework": 1,
       "time": 5,
       "playing": false
     }
