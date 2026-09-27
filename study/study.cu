@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Water and stonework components. Reference pixels are never supplied to this renderer.
+// Water, stonework and moon-gate wall components. Reference pixels are never supplied to this renderer.
 __device__ float3 studyStone(float x,float z){
   float rx=x*.94f+z*.342f,rz=z*.94f-x*.342f;
   float row=floorf(rz/.5f),u=rx/.82f+row*.31f,v=rz/.5f;
@@ -79,6 +79,55 @@ __device__ float3 studyMasonryShade(float3 p,float3 d){
   float glint=powf(sat(dot3(norm(sub(sun,d)),n)),70)*wet*.22f;
   return add(mul(stone,light),v3(glint,glint*.94f,glint*.8f));
 }
+// Section 03: plaster wall with a cut-through circular gate and a tiled coping.
+__device__ float studyRoofHeight(float x){float q=(x-.90f)/.58f;return .76f+.25f*expf(-q*q)+.055f*x;}
+__device__ float studyGateRadius(float3 p){float x=p.x-.90f,y=p.y-.34f;return sqrtf(x*x+y*y);}
+__device__ float studyWallDistance(float3 p){
+  float roof=studyRoofHeight(p.x),rad=studyGateRadius(p),z=p.z+2;
+  float body=fmaxf(fabsf(p.x)-3.0f,fmaxf(fabsf(z)-.085f,fmaxf(-.10f-p.y,p.y-roof)));
+  body=fmaxf(body,.385f-rad);
+  float ring=fmaxf(fabsf(rad-.416f)-.031f,fabsf(z)-.098f);
+  ring=fmaxf(ring,-.10f-p.y);
+  float tileRib=.009f*cosf(p.x*96.6644f);
+  float tiles=fmaxf(fabsf(p.x)-3.03f,fmaxf(fabsf(z)-.18f,fabsf(p.y-(roof+.025f-fabsf(z)*.27f+tileRib))-.032f));
+  float ridge=fmaxf(fabsf(p.x)-3.03f,fmaxf(fabsf(z)-.023f,fabsf(p.y-roof-.068f)-.022f));
+  return fminf(fminf(body,ring),fminf(tiles,ridge));
+}
+__device__ float studyWallTrace(float3 o,float3 d,float maxT){
+  if(fabsf(d.z)<.00001f)return -1;
+  float a=(-2.19f-o.z)/d.z,b=(-1.81f-o.z)/d.z,t=fmaxf(0,fminf(a,b)),end=fminf(maxT,fmaxf(a,b));
+  for(int i=0;i<80;i++){
+    if(t>end)return -1;float dist=studyWallDistance(add(o,mul(d,t)));
+    if(dist<.0005f)return t;t+=fmaxf(.0003f,dist*.6f);
+  }
+  return -1;
+}
+__device__ float3 studyWallShade(float3 p){
+  float e=.001f;float3 n=norm(v3(studyWallDistance(add(p,v3(e,0,0)))-studyWallDistance(sub(p,v3(e,0,0))),studyWallDistance(add(p,v3(0,e,0)))-studyWallDistance(sub(p,v3(0,e,0))),studyWallDistance(add(p,v3(0,0,e)))-studyWallDistance(sub(p,v3(0,0,e)))));
+  float grain=fbm(p.x*65,p.y*65),patch=fbm(p.x*9+2,p.y*13),rad=studyGateRadius(p),roof=studyRoofHeight(p.x);
+  float3 material=v3(.56f,.55f,.50f);
+  float stain=smooth(.46f,.72f,patch)*(1-smooth(-.05f,.48f,p.y));
+  float runoff=smooth(.53f,.76f,fbm(p.x*48,p.y*3))*expf(-fmaxf(0,roof-p.y)*5);
+  float chipped=smooth(.55f,.72f,fbm(p.x*30,p.y*34))*(1-smooth(.02f,.30f,p.y));
+  material=mix3(material,v3(.28f,.29f,.22f),sat(stain*.65f+runoff*.30f+chipped*.45f));
+  float cracks=1-smooth(.007f,.018f,fabsf(noise(p.x*14,p.y*27)-.5f));
+  material=mul(material,.87f+grain*.22f-cracks*.045f);
+  if(rad<.451f){
+    float angle=atan2f(p.y-.34f,p.x-.90f),segment=frac(angle*7.639437f);
+    float joint=smooth(.012f,.07f,fminf(segment,1-segment));
+    float id=hash(floorf(angle*7.639437f),1);
+    material=mul(mix3(v3(.31f,.32f,.29f),v3(.57f,.55f,.48f),id),(.68f+.5f*grain)*(.4f+.6f*joint));
+  }
+  if(p.y>roof-.035f){
+    float u=frac(p.x/.065f),v=frac((p.z+2)/.07f),id=hash(floorf(p.x/.065f),floorf((p.z+2)/.07f));
+    float joint=smooth(.015f,.10f,fminf(u,1-u))*smooth(.015f,.12f,fminf(v,1-v));
+    material=mul(mix3(v3(.06f,.075f,.075f),v3(.19f,.22f,.21f),id),(.7f+.3f*grain)*(.35f+.65f*joint));
+  }
+  // Ambient courtyard bounce keeps plaster readable before foliage is built.
+  float light=.72f+.45f*sat(dot3(n,norm(v3(-.45f,.7f,.55f))));
+  float reveal=rad<.39f?.58f:1;
+  return mul(material,light*reveal);
+}
 // A small procedural lighting proxy supplies reflected foliage and plaster.
 // It is not the assembled garden and contains no target-image samples.
 __device__ float3 studyReflection(float3 p,float3 d){
@@ -109,7 +158,7 @@ __device__ float4 studySurface(const float4 *surface,float x,float z,float wave,
   }
   return make_float4(h,gx,gz,0);
 }
-__global__ void study_render(const float4 *surface,const float4 *caustics,float4 *hdr,int width,int height,float cameraHeight,float pitch,float fov,float depth,float wave,float caustic,float tint,float time,int stonework){
+__global__ void study_render(const float4 *surface,const float4 *caustics,float4 *hdr,int width,int height,float cameraHeight,float pitch,float fov,float depth,float wave,float caustic,float tint,float time,int stonework,int wall){
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);if(x>=width||y>=height)return;
   float sx=(x+.5f)/width*2-1,sy=1-(y+.5f)/height*2;
   float scale=tanf(fov*.00872664626f),aspect=(float)width/height;
@@ -118,7 +167,9 @@ __global__ void study_render(const float4 *surface,const float4 *caustics,float4
   // Context remains visibly unbuilt; it is not filled with the target photograph.
   float waterT=d.y<-.001f?-o.y/d.y:1000;
   float stoneT=stonework?studyMasonryTrace(o,d,waterT): -1;
-  if(stoneT>=0){color=studyMasonryShade(add(o,mul(d,stoneT)),d);}
+  float wallT=wall?studyWallTrace(o,d,fminf(waterT,stoneT>=0?stoneT:1000)):-1;
+  if(wallT>=0){color=studyWallShade(add(o,mul(d,wallT)));}
+  else if(stoneT>=0){color=studyMasonryShade(add(o,mul(d,stoneT)),d);}
   else if((float)y/height>.375f&&d.y<-.001f){
     float t=-o.y/d.y;float3 p=add(o,mul(d,t));
     float4 s=studySurface(surface,p.x,p.z,wave,time);
@@ -132,7 +183,9 @@ __global__ void study_render(const float4 *surface,const float4 *caustics,float4
     if(stonework&&bed.z<.7f){ground=mul(ground,studyMasonryShadow(add(bed,v3(0,.003f,0))));}
     float3 rd=sub(d,mul(n,2*dot3(d,n)));
     float3 reflection=studyReflection(p,rd);
-    float reflectedT=stonework?studyMasonryTrace(add(p,v3(0,.003f,0)),rd,8):-1;
+    float wallReflection=wall?studyWallTrace(add(p,v3(0,.003f,0)),rd,12):-1;
+    if(wallReflection>=0)reflection=studyWallShade(add(add(p,v3(0,.003f,0)),mul(rd,wallReflection)));
+    float reflectedT=stonework?studyMasonryTrace(add(p,v3(0,.003f,0)),rd,wallReflection>=0?wallReflection:8):-1;
     if(reflectedT>=0)reflection=studyMasonryShade(add(add(p,v3(0,.003f,0)),mul(rd,reflectedT)),rd);
     color=mix3(ground,reflection,fresnel(sat(-dot3(d,n))));
   }

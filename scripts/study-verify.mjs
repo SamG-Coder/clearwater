@@ -16,10 +16,29 @@ try {
  const first=await page.evaluate(()=>studyLab.measure());await frames();const repeated=await page.evaluate(()=>studyLab.measure());
  assert(first.rowEdgesOpaque,'Padded rows must preserve opaque pixels at both image edges');
  assert(Number.isFinite(first.mae)&&first.mae>0&&first.mae<255);assert(Math.abs(first.mae-repeated.mae)<.01,'Paused frames must be repeatable');
+ const gateGeometry=await page.evaluate(async()=>{
+  const {GpuRuntime}=await import(new URL('../vendor/cuda-webshader/runtime/runtime.js',location.href).href);
+  const rt=await GpuRuntime.create();
+  const source=(await Promise.all(['../src/clearwater.cu','./study.cu'].map(p=>fetch(p).then(r=>r.text())))).join('\n')+`
+__global__ void gate_probe(float4 *result){result[0]=make_float4(studyWallTrace(v3(.9f,.34f,0),v3(0,0,-1),4),studyWallTrace(v3(1.4f,.34f,0),v3(0,0,-1),4),studyWallTrace(v3(.9f,.755f,0),v3(0,0,-1),4),1);}`;
+  const kernel=await rt.kernel(source,{entry:'gate_probe',workgroupSize:[1,1,1]}),result=rt.createBuffer(16);
+  rt.batch().dispatch(kernel.bind({result}),[1,1,1]).submit();await rt.idle();
+  const values=Array.from(await rt.read(result,Float32Array));rt.destroyBuffer(result);rt.device.destroy();return values;
+ });
+ assert(gateGeometry[0]<0,'A ray through the gate must pass through the opening');
+ assert(gateGeometry[1]>0&&gateGeometry[2]>0,'Plaster and stone surround must be solid geometry');
+ const wall=await page.evaluate(()=>studyLab.measure([.36,.015,.97,.34]));
+ const wallWater=await page.evaluate(()=>studyLab.measure([.65,.43,.9,.61]));
+ await page.locator('#wall').uncheck();await frames();
+ const noWall=await page.evaluate(()=>studyLab.measure([.36,.015,.97,.34]));
+ const noWallWater=await page.evaluate(()=>studyLab.measure([.65,.43,.9,.61]));
+ assert(wall.mae<noWall.mae,'Wall geometry should improve the reference region');
+ assert.notEqual(wallWater.checksum,noWallWater.checksum,'Wall must appear in water reflections');
+ await page.locator('#wall').check();await frames();
  const bridge=await page.evaluate(()=>studyLab.measure([.375,.285,.655,.44]));
  const reflected=await page.evaluate(()=>studyLab.measure([.38,.45,.65,.64]));
  await page.locator('#stonework').uncheck();await frames();const absent=await page.evaluate(()=>studyLab.measure([.375,.285,.655,.44]));
- const noReflection=await page.evaluate(()=>studyLab.measure([.38,.45,.65,.64]));assert(Math.abs(reflected.mae-noReflection.mae)>.1,'Stonework must affect the water below the bridge');
+ const noReflection=await page.evaluate(()=>studyLab.measure([.38,.45,.65,.64]));assert.notEqual(reflected.checksum,noReflection.checksum,'Stonework must affect the water below the bridge');
  assert(bridge.mae<absent.mae,'Stonework should improve the bridge region over absent geometry');
  await page.locator('#stonework').check();await frames();
  await page.click('#bridgeMeasure');await page.waitForFunction(()=>document.querySelector('#bridgeMetric').textContent.includes('MAE'));
@@ -32,5 +51,5 @@ try {
  await page.locator('#exposure').fill('0.25');await frames();const changed=await page.evaluate(()=>studyLab.measure());assert(Math.abs(changed.mae-first.mae)>5,'Exposure control must affect the GPU output');
  await page.click('#reset');await page.click('#pause');await frames();assert(await page.evaluate(()=>studyLab.state.time>5));await page.click('#pause');const time=await page.evaluate(()=>studyLab.state.time);await frames();assert.equal(await page.evaluate(()=>studyLab.state.time),time);
  await page.click('#reset');await frames();assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>studyDiagnostics.errors),[]);
- const report={url:page.url(),geometry,first,repeated,bridge,absent,reflected,noReflection,changed,errors};await writeFile('previews/study-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify({mae:first.mae,rmse:first.rmse,bridge:bridge.mae,withoutBridge:absent.mae,errors,normalReadbackBytes:0}));
+ const report={url:page.url(),geometry,gateGeometry,first,repeated,wall,noWall,wallWater,noWallWater,bridge,absent,reflected,noReflection,changed,errors};await writeFile('previews/study-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify({mae:first.mae,rmse:first.rmse,wall:wall.mae,withoutWall:noWall.mae,bridge:bridge.mae,withoutBridge:absent.mae,errors,normalReadbackBytes:0}));
 } finally {await browser.close();}

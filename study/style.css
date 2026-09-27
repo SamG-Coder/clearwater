@@ -3,3 +3,5 @@
 body.nativePixels main{overflow:auto;display:block}body.nativePixels #stage{width:1672px;height:941px;flex-shrink:0}#zoom{margin-top:12px;width:100%}
 
 #bridgeRoi{position:absolute;left:37.5%;top:28.5%;width:28%;height:15.5%;border:1px dashed #9bc9ed;pointer-events:none}#bridgeMeasure{width:100%;margin-top:14px}
+
+#wallMeasure{width:100%;margin-top:14px}

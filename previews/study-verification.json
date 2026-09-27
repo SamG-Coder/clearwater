@@ -30,10 +30,17 @@
       "left": 20
     }
   },
+  "gateGeometry": [
+    -1,
+    1.914795994758606,
+    1.9016231298446655,
+    1
+  ],
   "first": {
+    "checksum": 2339224033,
     "rowEdgesOpaque": true,
-    "mae": 38.984681649723434,
-    "rmse": 49.63126158096302,
+    "mae": 38.99529200295217,
+    "rmse": 49.64197187461877,
     "region": [
       0.32,
       0.7,
@@ -52,14 +59,16 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 1,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
   },
   "repeated": {
+    "checksum": 2339224033,
     "rowEdgesOpaque": true,
-    "mae": 38.984681649723434,
-    "rmse": 49.63126158096302,
+    "mae": 38.99529200295217,
+    "rmse": 49.64197187461877,
     "region": [
       0.32,
       0.7,
@@ -78,14 +87,128 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 1,
+      "wall": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "wall": {
+    "checksum": 2156351623,
+    "rowEdgesOpaque": true,
+    "mae": 47.95716259490729,
+    "rmse": 63.612069431082745,
+    "region": [
+      0.36,
+      0.015,
+      0.97,
+      0.34
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "wall": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "noWall": {
+    "checksum": 1438847729,
+    "rowEdgesOpaque": true,
+    "mae": 58.029680586402215,
+    "rmse": 66.54007187477289,
+    "region": [
+      0.36,
+      0.015,
+      0.97,
+      0.34
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "wall": 0,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "wallWater": {
+    "checksum": 217019247,
+    "rowEdgesOpaque": true,
+    "mae": 42.667319398918735,
+    "rmse": 53.034434629866524,
+    "region": [
+      0.65,
+      0.43,
+      0.9,
+      0.61
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "wall": 1,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "noWallWater": {
+    "checksum": 627216580,
+    "rowEdgesOpaque": true,
+    "mae": 42.659500801725486,
+    "rmse": 52.94220498580687,
+    "region": [
+      0.65,
+      0.43,
+      0.9,
+      0.61
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "stonework": 1,
+      "wall": 0,
       "time": 5,
       "playing": false
     }
   },
   "bridge": {
+    "checksum": 1935955502,
     "rowEdgesOpaque": true,
-    "mae": 46.855516258964535,
-    "rmse": 58.288658569660676,
+    "mae": 44.48168287651046,
+    "rmse": 57.188617618082844,
     "region": [
       0.375,
       0.285,
@@ -104,14 +227,16 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 1,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
   },
   "absent": {
+    "checksum": 2367232219,
     "rowEdgesOpaque": true,
-    "mae": 55.03727281658316,
-    "rmse": 67.17672629163192,
+    "mae": 61.14570193535711,
+    "rmse": 74.9988877672384,
     "region": [
       0.375,
       0.285,
@@ -130,14 +255,16 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 0,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
   },
   "reflected": {
+    "checksum": 2772975528,
     "rowEdgesOpaque": true,
-    "mae": 37.23692051602164,
-    "rmse": 45.58841350269697,
+    "mae": 35.51764877236787,
+    "rmse": 44.023744822516925,
     "region": [
       0.38,
       0.45,
@@ -156,14 +283,16 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 1,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
   },
   "noReflection": {
+    "checksum": 3179975235,
     "rowEdgesOpaque": true,
-    "mae": 34.3341115272576,
-    "rmse": 42.795640789436064,
+    "mae": 36.46888056595922,
+    "rmse": 45.26462563359472,
     "region": [
       0.38,
       0.45,
@@ -182,14 +311,16 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 0,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
   },
   "changed": {
+    "checksum": 1889814249,
     "rowEdgesOpaque": true,
-    "mae": 75.10715504448095,
-    "rmse": 86.37076148257434,
+    "mae": 75.11628336071233,
+    "rmse": 86.37804430355914,
     "region": [
       0.32,
       0.7,
@@ -208,6 +339,7 @@
       "pitch": -0.27,
       "fov": 58,
       "stonework": 1,
+      "wall": 1,
       "time": 5,
       "playing": false
     }
