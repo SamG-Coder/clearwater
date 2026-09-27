@@ -13,7 +13,7 @@ async function moduleGraph(file){
 }
 await moduleGraph(path.join(root,'app.js'));
 await moduleGraph(path.join(root,'pool/app.js'));
-for(const file of [...modules,...['index.html','style.css','src/clearwater.cu','pool/index.html','pool/style.css','pool/pool.cu','assets/seabed.jpg','LICENSE','THIRD_PARTY_NOTICES.md','vendor/cuda-webshader/LICENSE'].map(f=>path.join(root,f))]){
+for(const file of [...modules,...['index.html','style.css','src/clearwater.cu','pool/index.html','pool/style.css','pool/pool.cu','cube/index.html','cube/cube.cu','assets/seabed.jpg','LICENSE','THIRD_PARTY_NOTICES.md','vendor/cuda-webshader/LICENSE'].map(f=>path.join(root,f))]){
  const relative=path.relative(root,file);if(relative.startsWith('..'))throw Error('Asset outside project');
  await mkdir(path.dirname(path.join(out,relative)),{recursive:true});await cp(file,path.join(out,relative));
 }

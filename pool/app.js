@@ -1,6 +1,7 @@
 import { GpuRuntime } from "../vendor/cuda-webshader/runtime/runtime.js";
 const $ = (id) => document.getElementById(id),
   canvas = $("pool");
+const cube = canvas.dataset.scene === "cube";
 const state = {
   time: 0,
   playing: true,
@@ -15,6 +16,15 @@ const state = {
   targetZ: 0,
   frames: 0,
 };
+if (cube)
+  Object.assign(state, {
+    angle: 0.65,
+    elevation: 0.5,
+    distance: 4.6,
+    targetX: -0.45,
+    wind: 3,
+    clouds: 0.1,
+  });
 const diag = (window.poolDiagnostics = { ready: false, errors: [], state });
 let rt,
   k = {},
@@ -72,6 +82,37 @@ $("auto").onchange = () => {
   state.age = $("auto").checked ? 0 : -1;
 };
 function view(id) {
+  if (cube) {
+    Object.assign(
+      state,
+      id === "hero"
+        ? {
+            angle: 0.65,
+            elevation: 0.5,
+            distance: 4.6,
+            targetX: -0.45,
+            targetZ: 0,
+          }
+        : id === "waterline"
+          ? {
+              angle: 0.15,
+              elevation: 0.3,
+              distance: 3.5,
+              targetX: -0.15,
+              targetZ: 0,
+            }
+          : {
+              angle: 0.3,
+              elevation: 0.85,
+              distance: 2.8,
+              targetX: -0.25,
+              targetZ: 0,
+            },
+    );
+    for (const p of ["hero", "waterline", "tiles"])
+      $(p).classList.toggle("active", p === id);
+    return;
+  }
   Object.assign(
     state,
     id === "hero"
@@ -156,7 +197,7 @@ function camera() {
     camX:
       state.targetX +
       Math.sin(state.angle) * state.distance * Math.cos(state.elevation),
-    camY: Math.sin(state.elevation) * state.distance,
+    camY: Math.sin(state.elevation) * state.distance - (cube ? 0.65 : 0),
     camZ:
       state.targetZ +
       Math.cos(state.angle) * state.distance * Math.cos(state.elevation),
@@ -168,7 +209,11 @@ try {
   rt = await GpuRuntime.create({ onError: fail });
   const source = (
     await Promise.all(
-      ["../src/clearwater.cu", "./pool.cu"].map((p) =>
+      [
+        "../src/clearwater.cu",
+        "../pool/pool.cu",
+        ...(cube ? ["./cube.cu"] : []),
+      ].map((p) =>
         fetch(p).then((r) => {
           if (!r.ok) throw Error(p);
           return r.text();
@@ -194,7 +239,14 @@ try {
     "present",
   ])
     k[entry] = await rt.kernel(source, {
-      entry,
+      entry: cube
+        ? {
+            pool_render: "cube_render",
+            pool_step: "cube_step",
+            ripple_normals: "cube_normals",
+            pool_caustics: "cube_caustics",
+          }[entry] || entry
+        : entry,
       workgroupSize: ["spectrum_rows", "spectrum_norm"].includes(entry)
         ? [64, 1, 1]
         : [8, 8, 1],
@@ -357,7 +409,11 @@ try {
       diag.width = width;
       diag.height = height;
       $("loading").hidden = true;
-      $("status").textContent = state.playing ? "LIVE / POOL STUDY" : "PAUSED";
+      $("status").textContent = state.playing
+        ? cube
+          ? "LIVE / WATER CUBE"
+          : "LIVE / POOL STUDY"
+        : "PAUSED";
       if (state.frames % 30 === 0)
         $("meter").textContent = `${width} × ${height} · CUDA / WEBGPU`;
       requestAnimationFrame(frame);

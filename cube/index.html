@@ -4,29 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#112e34" />
-    <title>Clearwater · The pool</title>
+    <title>Clearwater · Water cube</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="../pool/style.css" />
   </head>
   <body>
     <canvas
       id="pool"
-      aria-label="Interactive curved swimming pool; drag to orbit, scroll to zoom, click water for a ripple"
+      data-scene="cube"
+      aria-label="Interactive transparent water cube; drag to orbit, scroll to zoom, click water for a ripple"
     ></canvas>
     <header>
-      <a href="../">≈ CLEARWATER <span>/ THE POOL</span></a
+      <a href="../">≈ CLEARWATER <span>/ WATER CUBE</span></a
       ><button id="restore" aria-label="Show pool controls">
         Show controls</button
       ><span id="status">PREPARING WATER</span>
     </header>
     <aside>
       <p class="eyebrow">A STUDY IN LIGHT & WATER</p>
-      <h1>A quieter<br />kind of water.</h1>
+      <h1>Water,<br />in a cube.</h1>
       <p class="intro">
-        Slate, sunlight, and a little weather.<br />A bounded pool, rendered in
+        Jade water over weathered stone.<br />A two-metre optical test volume in
         CUDA.
       </p>
-      <p><a href="../cube/" style="color:inherit;font-size:11px">Water cube test ↗</a></p><div class="line"></div>
+      <div class="line"></div>
       <p class="eyebrow">THE ATMOSPHERE</p>
       <div class="buttons">
         <button id="sunny" class="active">Sunlit</button
@@ -51,9 +52,9 @@
       <div class="line"></div>
       <p class="eyebrow">THE VIEW</p>
       <div class="buttons">
-        <button id="hero" class="active">Overview</button
-        ><button id="waterline">Waterline</button
-        ><button id="tiles">Tile detail</button>
+        <button id="hero" class="active">Cube</button
+        ><button id="waterline">Surface</button
+        ><button id="tiles">Close up</button>
       </div>
       <label
         >Render quality<select id="quality">
@@ -72,9 +73,11 @@
       ><span id="meter">256² FFT / BOUNDED RIPPLES</span>
     </footer>
     <div id="loading">
-      Filling the pool…<small>Compiling CUDA water, tilework, and light.</small>
+      Preparing the water cube…<small
+        >Compiling reflection, refraction, and caustics.</small
+      >
     </div>
     <pre id="error" hidden></pre>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="../pool/app.js"></script>
   </body>
 </html>

@@ -6,6 +6,12 @@ A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com
 
 **[Explore the pool study](https://samg-coder.github.io/clearwater/pool/)** — a separate CUDA demo focused on a curved swimming pool and its tilework.
 
+## Water cube test
+
+**[Open the water cube](https://samg-coder.github.io/clearwater/cube/)** or visit `/cube/` locally. This is a two-metre cubic optical volume testing the lotus-pond reference's clear jade water, visible weathered stone, rippled refraction, and moving caustics. Drag to orbit, scroll to zoom, and click the top surface to disturb it. The existing weather and view controls are available.
+
+The CUDA renderer in [`cube/cube.cu`](cube/cube.cu) traces entry and exit through the cube, with wavelength-dependent absorption and up to four internal reflection segments. The top uses the shared short-wave FFT; rain and click impulses use a separate bounded 256² ripple field. The test reuses the pool's browser host rather than duplicating its GPU setup. The cubic boundary is an optical test constraint, not a freely suspended fluid simulation. The caustic map approximates overhead illumination of the stone base. Run `npm run test:cube` with the local server on port 5186.
+
 ## The pool study
 
 ![Pool study with CUDA water and tilework](previews/pool-ui.png)
