@@ -6,7 +6,6 @@ let source = await readFile(
 );
 source += "\n" + await readFile(new URL("../pool/pool.cu", import.meta.url), "utf8");
 source += "\n" + await readFile(new URL("../cube/cube.cu", import.meta.url), "utf8");
-source += "\n" + await readFile(new URL("../study/study.cu", import.meta.url), "utf8");
 for (const entry of [...source.matchAll(/__global__ void (\w+)/g)].map(
   (m) => m[1],
 )) {

@@ -8,7 +8,7 @@ export function createStaticServer(root=fileURLToPath(new URL('../',import.meta.
       if(file!==root&&!file.startsWith(root+path.sep)){res.writeHead(403);res.end('Forbidden');return;}
       if((await stat(file)).isDirectory())file=path.join(file,'index.html');
       const data=await readFile(file);res.writeHead(200,{'Content-Type':mime[path.extname(file)]||'application/octet-stream','Cache-Control':'no-cache','Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp','X-Content-Type-Options':'nosniff'});res.end(data);
-    }catch(error){res.writeHead(error.code==='ENOENT'?404:400,{'Content-Type':'text/plain'});res.end(error.code==='ENOENT'?'Not found. Run npm install to install Three.js.':'Bad request.');}
+    }catch(error){res.writeHead(error.code==='ENOENT'?404:400,{'Content-Type':'text/plain'});res.end(error.code==='ENOENT'?'Not found.':'Bad request.');}
   });
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
