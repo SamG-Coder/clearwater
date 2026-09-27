@@ -4,11 +4,29 @@ A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com
 
 **[Launch the live demo](https://samg-coder.github.io/clearwater/)** · [Native Windows version](Native/README.md)
 
+**[Explore the pool study](https://samg-coder.github.io/clearwater/pool/)** — a separate CUDA demo focused on a curved swimming pool and its tilework.
+
+## The pool study
+
+![Pool study with CUDA water and tilework](previews/pool-ui.png)
+
+Open `/pool/` on the local server or use the link above. This scene concentrates on the pool, pale segmented coping, submerged entry steps, ceramic mosaic lining, slate deck, and stepped terrace. Drag to orbit, scroll to zoom, or click the water to make a ripple. **Overview**, **Waterline**, and **Tile detail** provide three camera presets; **H** restores hidden controls.
+
+Sunlit, Breeze, and Rainstorm presets control wind, rainfall, and cloud cover. **Let the weather change** sends the shared moving storm across the pool at an accelerated showcase rate. Wind energy takes time to build and settle; rain injects individual impulses into a fixed 120 Hz wave equation with reflecting basin boundaries. Wet paving darkens and reflects the sky. Pause freezes simulation time while leaving the camera usable.
+
+Rain falls downward with a wind slant. Deterministic world-space drop events drive both visible contact crowns/expanding rings and the numerical surface impulses, making each splash visible where its ripple begins. The crowns are an analytic visual approximation, layered over the bounded wave field.
+
+[`pool/pool.cu`](pool/pool.cu) supplies the geometry, procedural stone and ceramic materials, pool dynamics, ray-traced reflection/refraction, and shallow-water optics. It compiles together with the existing [`src/clearwater.cu`](src/clearwater.cu), reusing the FFT, spectral weather response, sky, Fresnel optics, photon filtering, and tone mapping. Only the short 4.6 m FFT band contributes to pool wind ripples; ocean swell is excluded. The scene contains no terrain or imported models/textures.
+
+This is a real-time visual approximation: FFT wind ripples taper near the wall, the bounded solver handles rain and click impulses, and the RGB photon map uses a representative 1.5 m depth rather than a full light-transport solve on every step and wall. The pool is currently a browser sub-demo; the existing native ocean application is unchanged. Actions compile both CUDA demo paths for WebGPU and package both Pages entry points; they do not build native CUDA.
+
+Run `npm run test:pool` against the local server on port 5186 for GPU residency, bounded-ripple, weather, pause, controls, and screenshot checks.
+
 The live demo runs directly in a WebGPU-capable browser; no installation is needed.
 
 ![Clearwater CUDA](previews/clearwater-ui.png)
 
-All simulation and image formation lives in [`src/clearwater.cu`](src/clearwater.cu). The browser executes it through [SamG-Coder/cuda-webshader](https://github.com/SamG-Coder/cuda-webshader): CUDA source → generated WGSL → WebGPU. JavaScript handles DOM controls, asset decoding, resources, dispatch and presentation. The active application has no WebGL, Three.js, handwritten WGSL, CPU wave simulation or CPU FFT.
+Simulation and image formation live in [`src/clearwater.cu`](src/clearwater.cu), with the pool-specific geometry and optics in [`pool/pool.cu`](pool/pool.cu). The browser executes it through [SamG-Coder/cuda-webshader](https://github.com/SamG-Coder/cuda-webshader): CUDA source → generated WGSL → WebGPU. JavaScript handles DOM controls, asset decoding, resources, dispatch and presentation. The active application has no WebGL, Three.js, handwritten WGSL, CPU wave simulation or CPU FFT.
 
 ## Run
 

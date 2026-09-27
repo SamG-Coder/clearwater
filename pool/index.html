@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#112e34" />
+    <title>Clearwater · The pool</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <canvas
+      id="pool"
+      aria-label="Interactive curved swimming pool; drag to orbit, scroll to zoom, click water for a ripple"
+    ></canvas>
+    <header>
+      <a href="../">≈ CLEARWATER <span>/ THE POOL</span></a
+      ><button id="restore" aria-label="Show pool controls">
+        Show controls</button
+      ><span id="status">PREPARING WATER</span>
+    </header>
+    <aside>
+      <p class="eyebrow">A STUDY IN LIGHT & WATER</p>
+      <h1>A quieter<br />kind of water.</h1>
+      <p class="intro">
+        Slate, sunlight, and a little weather.<br />A bounded pool, rendered in
+        CUDA.
+      </p>
+      <div class="line"></div>
+      <p class="eyebrow">THE ATMOSPHERE</p>
+      <div class="buttons">
+        <button id="sunny" class="active">Sunlit</button
+        ><button id="breeze">Breeze</button
+        ><button id="storm">Rainstorm</button>
+      </div>
+      <label
+        >Wind <output id="windValue">4 m/s</output
+        ><input id="wind" type="range" min="0" max="24" value="4" step=".5"
+      /></label>
+      <label
+        >Rain <output id="rainValue">0%</output
+        ><input id="rain" type="range" min="0" max="1" value="0" step=".01"
+      /></label>
+      <label
+        >Cloud cover <output id="cloudValue">12%</output
+        ><input id="cloud" type="range" min="0" max="1" value=".12" step=".01"
+      /></label>
+      <label class="check"
+        ><input id="auto" type="checkbox" /> Let the weather change</label
+      >
+      <div class="line"></div>
+      <p class="eyebrow">THE VIEW</p>
+      <div class="buttons">
+        <button id="hero" class="active">Overview</button
+        ><button id="waterline">Waterline</button
+        ><button id="tiles">Tile detail</button>
+      </div>
+      <label
+        >Render quality<select id="quality">
+          <option value="768">Comfort · 768</option>
+          <option value="1152" selected>Fine · 1152</option>
+          <option value="1536">Ultra · 1536</option>
+        </select></label
+      >
+      <div class="buttons">
+        <button id="pause">Pause</button
+        ><button id="hide">Hide controls</button>
+      </div>
+    </aside>
+    <footer>
+      <span>DRAG TO ORBIT · SCROLL TO ZOOM · CLICK TO DISTURB</span
+      ><span id="meter">256² FFT / BOUNDED RIPPLES</span>
+    </footer>
+    <div id="loading">
+      Filling the pool…<small>Compiling CUDA water, tilework, and light.</small>
+    </div>
+    <pre id="error" hidden></pre>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

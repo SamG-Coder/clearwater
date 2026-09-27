@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --check app.js
+      - run: node --check pool/app.js
       - run: npm run check
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3

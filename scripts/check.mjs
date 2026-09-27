@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { compile } from "../vendor/cuda-webshader/compiler/compiler.js";
-const source = await readFile(
+let source = await readFile(
   new URL("../src/clearwater.cu", import.meta.url),
   "utf8",
 );
+source += "\n" + await readFile(new URL("../pool/pool.cu", import.meta.url), "utf8");
 for (const entry of [...source.matchAll(/__global__ void (\w+)/g)].map(
   (m) => m[1],
 )) {
