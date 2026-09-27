@@ -6,6 +6,14 @@ A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com
 
 **[Explore the pool study](https://samg-coder.github.io/clearwater/pool/)** — a separate CUDA demo focused on a curved swimming pool and its tilework.
 
+## Reference matching study
+
+**[Open the reference comparison](https://samg-coder.github.io/clearwater/study/)** or visit `/study/` locally. This is the water-component pass for the generated Jiangnan garden concept. It uses the reference's exact 1672 × 941 pixel grid, with adjustable opacity overlay, wipe, absolute RGB difference, and a scrollable 1:1 pixel inspection view. Pause locks wave time for repeatable comparisons; camera height, pitch, field of view, water depth, exposure, absorption, and ripple strength are adjustable.
+
+[`study/study.cu`](study/study.cu) renders submerged stone, FFT refraction, RGB photon caustics, and isolated drop rings. The caustics use a bounded 4 m photon tile at the selected bed depth; this is an optical approximation. A procedural lighting proxy supplies reflected foliage and plaster. The reference PNG is a separate DOM comparison layer and is never sampled by the CUDA renderer. The upper scene remains gray because the garden architecture and plants have not been assembled. **The rendered content is not yet a pixel-perfect match.** Stone arrangement, reflections, and scene silhouettes remain unfinished.
+
+The optional measurement button reads the GPU output and reports RGB MAE/RMSE for the outlined foreground-water rectangle. It excludes most surrounding objects, so it is not a full-scene score. Normal rendering performs no CPU readback. `npm run test:study` checks exact image/canvas alignment, row padding, comparison modes, pause, material controls, and measurement repeatability in Edge against port 5186. Save settings exports the comparison parameters as JSON.
+
 ## Water cube test
 
 **[Open the water cube](https://samg-coder.github.io/clearwater/cube/)** or visit `/cube/` locally. This is a two-metre cubic optical volume testing the lotus-pond reference's clear jade water, visible weathered stone, rippled refraction, and moving caustics. Drag to orbit, scroll to zoom, and click the top surface to disturb it. The existing weather and view controls are available.

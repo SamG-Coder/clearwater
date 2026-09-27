@@ -1,0 +1,109 @@
+{
+  "url": "http://127.0.0.1:5186/study/",
+  "geometry": {
+    "canvas": [
+      1672,
+      941
+    ],
+    "image": [
+      1672,
+      941
+    ],
+    "c": {
+      "x": 20,
+      "y": 151.171875,
+      "width": 1380,
+      "height": 776.65625,
+      "top": 151.171875,
+      "right": 1400,
+      "bottom": 927.828125,
+      "left": 20
+    },
+    "r": {
+      "x": 20,
+      "y": 151.171875,
+      "width": 1380,
+      "height": 776.65625,
+      "top": 151.171875,
+      "right": 1400,
+      "bottom": 927.828125,
+      "left": 20
+    }
+  },
+  "first": {
+    "rowEdgesOpaque": true,
+    "mae": 38.984681649723434,
+    "rmse": 49.63126158096302,
+    "region": [
+      0.32,
+      0.7,
+      0.75,
+      0.95
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "repeated": {
+    "rowEdgesOpaque": true,
+    "mae": 38.984681649723434,
+    "rmse": 49.63126158096302,
+    "region": [
+      0.32,
+      0.7,
+      0.75,
+      0.95
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.65,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "changed": {
+    "rowEdgesOpaque": true,
+    "mae": 75.10715504448095,
+    "rmse": 86.37076148257434,
+    "region": [
+      0.32,
+      0.7,
+      0.75,
+      0.95
+    ],
+    "width": 1672,
+    "height": 941,
+    "state": {
+      "depth": 0.55,
+      "wave": 0.55,
+      "caustic": 1.25,
+      "tint": 0.8,
+      "exposure": 0.25,
+      "height": 0.9,
+      "pitch": -0.27,
+      "fov": 58,
+      "time": 5,
+      "playing": false
+    }
+  },
+  "errors": []
+}
