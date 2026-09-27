@@ -5,3 +5,7 @@ body.nativePixels main{overflow:auto;display:block}body.nativePixels #stage{widt
 #bridgeRoi{position:absolute;left:37.5%;top:28.5%;width:28%;height:15.5%;border:1px dashed #9bc9ed;pointer-events:none}#bridgeMeasure{width:100%;margin-top:14px}
 
 #wallMeasure{width:100%;margin-top:14px}
+
+#pavilionMeasure{width:100%;margin-top:14px}
+
+details{border-top:1px solid #ffffff16;margin-top:20px;padding-top:15px}summary{cursor:pointer;color:#b5d0be;font-size:11px;letter-spacing:.3px}details[open] summary{margin-bottom:18px}
