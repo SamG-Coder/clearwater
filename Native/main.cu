@@ -125,7 +125,7 @@ struct App {
   control(L"BUTTON",L"Clearwater",Clear,24,107,142,32,WS_TABSTOP);control(L"BUTTON",L"Open water",Open,176,107,142,32,WS_TABSTOP);
   energyLabel=slider(L"Wave energy",Energy,162,15,300);depthLabel=slider(L"Water depth",Depth,227,5,160);exposureLabel=slider(L"Exposure",Exposure,292,40,240);speedLabel=slider(L"Flight speed",Speed,357,0,1000);
   control(L"STATIC",L"Resolution",0,24,430,138,20);control(L"STATIC",L"Surface view",0,176,430,140,20);
-  auto q=control(L"COMBOBOX",L"",Quality,24,455,142,180,CBS_DROPDOWNLIST|WS_TABSTOP);for(auto s:{L"768 - Performance",L"1152 - Balanced",L"1536 - High"})SendMessageW(q,CB_ADDSTRING,0,(LPARAM)s);SendMessageW(q,CB_SETCURSEL,1,0);
+  auto q=control(L"COMBOBOX",L"",Quality,24,455,142,180,CBS_DROPDOWNLIST|WS_TABSTOP);for(auto s:{L"768 - Performance",L"1152 - Balanced",L"1536 - High",L"1920 - 1080p",L"2560 - 1440p / 2K"})SendMessageW(q,CB_ADDSTRING,0,(LPARAM)s);SendMessageW(q,CB_SETCURSEL,1,0);
   auto v=control(L"COMBOBOX",L"",View,176,455,142,180,CBS_DROPDOWNLIST|WS_TABSTOP);for(auto s:{L"Water",L"Caustics",L"Normals"})SendMessageW(v,CB_ADDSTRING,0,(LPARAM)s);SendMessageW(v,CB_SETCURSEL,0,0);
   control(L"BUTTON",L"Lens glare",Glare,24,497,140,24,BS_AUTOCHECKBOX|WS_TABSTOP);SendDlgItemMessageW(controls,Glare,BM_SETCHECK,BST_CHECKED,0);control(L"BUTTON",L"Drift forward",Cruise,176,497,142,24,BS_AUTOCHECKBOX|WS_TABSTOP);
   control(L"BUTTON",L"Pause",Pause,24,537,90,32,WS_TABSTOP);control(L"BUTTON",L"Reset view",Reset,125,537,92,32,WS_TABSTOP);control(L"BUTTON",L"Save PNG",Capture,228,537,90,32,WS_TABSTOP);
@@ -145,7 +145,7 @@ struct App {
   if(id==Clear||id==Open){energy=id==Open?2.4f:1;depth=id==Open?12:1.6f;cam.y=id==Open?3:1.55f;cam.pitch=id==Open?-.19f:-.24f;}
   if(id==Pause)playing=!playing;if(id==Reset)cam=Camera{};if(id==Capture)capture=true;
   if(id==Glare)glare=SendDlgItemMessageW(controls,Glare,BM_GETCHECK,0,0)==BST_CHECKED;if(id==Cruise)cruise=SendDlgItemMessageW(controls,Cruise,BM_GETCHECK,0,0)==BST_CHECKED;
-  if(id==Quality&&notification==CBN_SELCHANGE){int sel=(int)SendDlgItemMessageW(controls,Quality,CB_GETCURSEL,0,0);quality=sel==0?768:sel==1?1152:1536;resizePending=true;}if(id==View&&notification==CBN_SELCHANGE)view=(int)SendDlgItemMessageW(controls,View,CB_GETCURSEL,0,0);labels();
+  if(id==Quality&&notification==CBN_SELCHANGE){int sel=(int)SendDlgItemMessageW(controls,Quality,CB_GETCURSEL,0,0);const int sizes[]={768,1152,1536,1920,2560};if(sel>=0&&sel<5)quality=sizes[sel];resizePending=true;}if(id==View&&notification==CBN_SELCHANGE)view=(int)SendDlgItemMessageW(controls,View,CB_GETCURSEL,0,0);labels();
  }
  void scrollControl(HWND h){int id=GetDlgCtrlID(h),v=(int)SendMessageW(h,TBM_GETPOS,0,0);if(id==Wind)wind=v/10.f;if(id==Rain)rain=v/100.f;if(id==Clouds)clouds=v/100.f;if(id==Direction)direction=v/100.f;if(id==Strength)strength=v/100.f;if(id==Energy)energy=v/100.f;if(id==Depth)depth=v/10.f;if(id==Exposure)exposure=v/100.f;if(id==Speed)cam.speed=.1f*std::pow(2000.f,v/1000.f);labels();}
  void smoke(){
