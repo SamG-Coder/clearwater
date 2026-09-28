@@ -1,0 +1,4 @@
+import {chromium} from 'playwright';
+import {writeFile} from 'node:fs/promises';
+const b=await chromium.launch({channel:'msedge',headless:false,args:['--enable-unsafe-webgpu']});
+try{const p=await b.newPage({viewport:{width:1440,height:900}});await p.goto('http://127.0.0.1:5186/');await p.waitForFunction(()=>clearwaterDiagnostics?.frames>20,null,{timeout:120000});const result=await p.evaluate(()=>new Promise(resolve=>{const samples=[];let last=-1;function sample(){const d=clearwaterDiagnostics;if(d.frames!==last){last=d.frames;samples.push(d.frameMs);}if(samples.length>=100){samples.sort((a,b)=>a-b);resolve({medianFrameWorkMs:samples[50],p95FrameWorkMs:samples[95],readbackBytes:d.readbackBytes,frames:d.frames});}else requestAnimationFrame(sample);}sample();}));await writeFile(`previews/quality/${process.argv[2]}.json`,JSON.stringify(result,null,2));console.log(result);}finally{await b.close();}

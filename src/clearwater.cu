@@ -277,7 +277,7 @@ __global__ void resolve_surface(const float4 *input, float4 *surface) {
   surface[id] = make_float4(s.x, s.y, s.z, s.y * s.y + s.z * s.z);
 }
 // Recover Hermitian height from packed H+i*dH/dx and pack horizontal displacement.
-__global__ void chop_spectrum(const float4 *input,float4 *output){
+__global__ void chop_spectrum(const float4 *input,float4 *output,float sea){
  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y),c=(int)blockIdx.z;
  if(x>=256||z>=256)return;
  int id=c*65536+z*256+x,op=c*65536+wrap(-z,256)*256+wrap(-x,256);
@@ -285,7 +285,7 @@ __global__ void chop_spectrum(const float4 *input,float4 *output){
  float re=(a.x+b.x)*.5f,im=(a.y-b.y)*.5f;
  float kx=(float)(x<128?x:x-256),kz=(float)(z<128?z:z-256);
  if(x==128)kx=0;if(z==128)kz=0;
- float inv=rsqrtf(fmaxf(kx*kx+kz*kz,.00001f))*(c==0?.18f:(c==1?1.15f:.75f));
+ float inv=rsqrtf(fmaxf(kx*kx+kz*kz,.00001f))*(c==0?.18f:(c==1?1.15f:.75f))/fmaxf(1,sea);
  output[id]=make_float4((-kx*im-kz*re)*inv,(kx*re-kz*im)*inv,0,0);
 }
 // Resample the displaced parametric surface onto the ray solver's world grid.
@@ -337,6 +337,81 @@ __device__ float3 ray(float sx, float sy, float aspect, float yaw,
          sp + sy * .62487f * cp,
          -cy * cp + sx * aspect * .62487f * syaw + sy * .62487f * cy * sp));
 }
+// Repeatable world-space impacts, shared by the ripple solver and visible rings.
+__device__ float4 oceanDrop(float cx,float cz,float time,float rain){
+ float phase=hash(cx,cz)*.85f,clock=time+phase,tick=floorf(clock/.85f),age=clock-tick*.85f;
+ float active=hash(cx+tick*13,cz-tick*7)<rain*.8f?1.0f:0.0f;
+ return make_float4((cx+.15f+.7f*hash(cx+tick,cz+17))*.7f,
+                    (cz+.15f+.7f*hash(cx+53,cz+tick))*.7f,age,active);
+}
+__device__ float4 oceanImpact(float x,float z,float time,float rain){
+ float nx=0,nz=0,flash=0;
+ if(rain<.01f)return make_float4(0,0,0,0);
+ float cx=floorf(x/.7f),cz=floorf(z/.7f);
+ for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
+  float4 drop=oceanDrop(cx+(float)i,cz+(float)j,time,rain);
+  float dx=x-drop.x,dz=z-drop.y,r=sqrtf(dx*dx+dz*dz),age=drop.z;
+  float q=r-age*.65f,fade=expf(-age*6)*drop.w;
+  float ring=expf(-q*q/.00045f)*fade;
+  float slope=-q/.00045f*ring*.004f;
+  nx+=slope*dx/fmaxf(.008f,r);nz+=slope*dz/fmaxf(.008f,r);
+  float crown=expf(-square((r-.025f-age*.15f)/.015f))*expf(-age*18)*drop.w;
+  flash+=ring*.10f+crown*.7f;
+ }
+ return make_float4(nx,nz,sat(flash),0);
+}
+// Drops on two families of advected world planes. Both are blended to avoid
+// switching rain orientation when the camera turns. Ray depth hides far drops.
+__device__ float rainVolume(float3 origin,float3 rayDirection,float distance,const float4 *weather,float time){
+ float amount=sat(weather[0].y+stormAt(weather,origin.x,origin.z)*.9f);
+ if(amount<.001f)return 0;
+ float result=0,windX=weather[1].x*weather[0].x*.16f,windZ=weather[1].y*weather[0].x*.16f;
+ for(int axis=0;axis<2;axis++){
+  float dir=axis==0?rayDirection.z:rayDirection.x;
+  float along=axis==0?origin.z:origin.x,velocity=axis==0?windZ:windX;
+  float transverse=axis==0?windX:windZ;
+  float orientation=fabsf(dir);
+  if(orientation<.08f)continue;
+  float base=floorf((along-velocity*time)/5),sgn=dir<0?-1.0f:1.0f;
+  for(int layer=1;layer<=4;layer++){
+   float plane=base+sgn*(float)layer;
+   float t=(plane*5+velocity*time-along)/dir;
+   if(t<.3f||t>distance||t>35)continue;
+   float3 p=add(origin,mul(rayDirection,t));
+   float u=((axis==0?p.x:p.z)-transverse*time)/.8f;
+   float column=floorf(u),v=(p.y+12*time)/2.6f+hash(column,plane)*7;
+   float row=floorf(v),seed=hash(column+row*17,plane+axis*59);
+   float dy=(frac(v)-.5f)*2.6f;
+   float dx=(frac(u)-(.2f+.6f*hash(column+row,plane+23)))*.8f+dy*transverse/12;
+   float width=.003f+t*.0006f;
+   float streak=smooth(width*2,0,fabsf(dx))*smooth(.23f,.04f,fabsf(dy));
+   result+=streak*(seed<amount*.28f?1.0f:0.0f)*orientation*(1-t/40);
+  }
+ }
+ return result;
+}
+__device__ float4 stormEvent(const float4 *weather,float time){
+ unsigned event=(unsigned)(int)floorf(time/9);
+ float phase=frac(time/9)*9,trigger=1+random(event+193u)*6;
+ float flash=expf(-square((phase-trigger)/.045f))+.55f*expf(-square((phase-trigger-.17f)/.065f));
+ float x=-450+random(event+71u)*900,z=-800-random(event+83u)*600;
+ flash*=stormAt(weather,x,z);
+ return make_float4(x,z,flash,(float)event);
+}
+__device__ float3 stormBolt(float3 d,float3 origin,const float4 *weather,float time){
+ float4 event=stormEvent(weather,time);
+ if(event.z<.002f||d.z>-.02f)return v3(0,0,0);
+ float t=(event.y-origin.z)/d.z;
+ if(t<0)return v3(0,0,0);
+ float y=origin.y+d.y*t,x=origin.x+d.x*t;
+ float segment=floorf(y/27),f=frac(y/27);
+ float zig=event.x+noise(y*.005f,event.w)*85+lerp(hash(segment,event.w),hash(segment+1,event.w),f)*17;
+ float bolt=expf(-fabsf(x-zig)/1.1f)*smooth(10,50,y)*smooth(1100,800,y);
+ float branch=zig+(y-400)*.6f;
+ bolt+=expf(-fabsf(x-branch)/.8f)*smooth(160,220,y)*smooth(440,380,y)*.5f;
+ return mul(v3(.60f,.77f,1),bolt*event.z*14);
+}
+
 // Fixed 120 Hz damped wave equation, camera-relative grid with integer
 // recentering.
 __global__ void ripple_step(const float4 *previous, float4 *next, int shiftX,
@@ -371,10 +446,9 @@ __global__ void ripple_step(const float4 *previous, float4 *next, int shiftX,
   float wx = centerX + ((float)x - 128) * .0625f,
         wz = centerZ + ((float)z - 128) * .0625f;
   float rainfall = sat(weather[0].y + stormAt(weather, wx, wz) * .9f);
-  unsigned tick = (unsigned)floorf(time * 120);
-  float chance = random((unsigned)(x + z * 256) + tick * 65537u);
-  if (chance < rainfall * .0024f)
-    h -= .007f * (.4f + .6f * random(tick + (unsigned)id));
+  float4 event=oceanDrop(floorf(wx/.7f),floorf(wz/.7f),time,rainfall);
+  if(event.z<1.0f/120 && event.w>.5f)
+    h-=.018f*expf(-(square(wx-event.x)+square(wz-event.y))/.003f);
   float edge = smooth(0, 16, (float)min(min(x, 255 - x), min(z, 255 - z)));
   next[id] =
       make_float4(h * lerp(.85f, 1, edge), vel * lerp(.85f, 1, edge), 0, 0);
@@ -608,6 +682,7 @@ __device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, floa
   float start=fmaxf(0,(360-origin.y)/elevation), end=fminf(11000,(3100-origin.y)/elevation);
   float step=fmaxf(0,end-start)/72, trans=1;
   float3 radiance=v3(0,0,0);
+  float4 event=stormEvent(weather,time);
   float mu=dot3(d,v3(.08959f,.51504f,-.85247f));
   float phase=.38f+.65f*powf(fmaxf(0,mu),8);
   for(int i=0;i<72;i++) {
@@ -621,6 +696,8 @@ __device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, floa
       float3 ambient=mix3(v3(.055f,.085f,.135f),v3(.32f,.41f,.55f),high);
       // Cheap multiple-scattering fill prevents pitch-black cloud interiors.
       float3 lit=add(mul(ambient,.65f+ .35f*expf(-density*2)),mul(light,phase*(direct+.10f*expf(-density))));
+      float flash=event.z/(1+(square(p.x-event.x)+square(p.z-event.y)+square(p.y-650))/180000);
+      lit=add(lit,mul(v3(.45f,.64f,1),flash*6));
       float opacity=1-expf(-density*step*.009f);
       radiance=add(radiance,mul(lit,trans*opacity));
       trans*=1-opacity;
@@ -638,12 +715,12 @@ __device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, floa
 __global__ void sky_environment(float4 *environment, const float4 *weather,
                                  float camX,float camY,float camZ,float time) {
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x), y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
-  if(x>=1024||y>=256)return;
-  float angle=((float)x+.5f)*6.283185307f/1024;
-  float elevation=square(((float)y+.5f)/256)*1.570796327f;
+  if(x>=512||y>=128)return;
+  float angle=((float)x+.5f)*6.283185307f/512;
+  float elevation=square(((float)y+.5f)/128)*1.570796327f;
   float3 d=v3(sinf(angle)*cosf(elevation),sinf(elevation),-cosf(angle)*cosf(elevation));
   float3 col=volumeSky(d,weather,v3(camX,camY,camZ),time);
-  environment[y*1024+x]=make_float4(col.x,col.y,col.z,1);
+  environment[y*512+x]=make_float4(col.x,col.y,col.z,1);
 }
 __global__ void cloud_shadow(float4 *environment, const float4 *weather,
                               float camX,float camZ,float time) {
@@ -655,23 +732,42 @@ __global__ void cloud_shadow(float4 *environment, const float4 *weather,
     float h=400+(float)i*180;
     optical+=cloudDensity(v3(wx+h*.17395f,h,wz-h*1.65518f),weather,time,0)*180/.51504f;
   }
-  environment[262144+z*128+x]=make_float4(expf(-optical*.009f),0,0,0);
+  environment[65536+z*128+x]=make_float4(expf(-optical*.009f),0,0,0);
 }
 __device__ float3 environmentSky(const float4 *environment,float3 d) {
-  float u=atan2f(d.x,-d.z)*1024/6.283185307f-.5f;
-  float v=sqrtf(atan2f(sat(d.y),sqrtf(fmaxf(0,1-d.y*d.y)))/1.570796327f)*256-.5f;
-  int x=(int)floorf(u),y=(int)floorf(fminf(254.999f,fmaxf(0,v)));
-  float4 a=mix4(environment[y*1024+wrap(x,1024)],environment[y*1024+wrap(x+1,1024)],frac(u));
-  float4 b=mix4(environment[(y+1)*1024+wrap(x,1024)],environment[(y+1)*1024+wrap(x+1,1024)],frac(u));
-  float4 c=mix4(a,b,frac(fminf(254.999f,fmaxf(0,v))));
+  float u=atan2f(d.x,-d.z)*512/6.283185307f-.5f;
+  float v=sqrtf(atan2f(sat(d.y),sqrtf(fmaxf(0,1-d.y*d.y)))/1.570796327f)*128-.5f;
+  int x=(int)floorf(u),y=(int)floorf(fminf(126.999f,fmaxf(0,v)));
+  float4 a=mix4(environment[y*512+wrap(x,512)],environment[y*512+wrap(x+1,512)],frac(u));
+  float4 b=mix4(environment[(y+1)*512+wrap(x,512)],environment[(y+1)*512+wrap(x+1,512)],frac(u));
+  float4 c=mix4(a,b,frac(fminf(126.999f,fmaxf(0,v))));
   return v3(c.x,c.y,c.z);
 }
 __device__ float environmentShadow(const float4 *environment,float x,float z,float camX,float camZ){
   float u=fminf(126.999f,fmaxf(0,(x-floorf(camX/32)*32)/32+64));
   float v=fminf(126.999f,fmaxf(0,(z-floorf(camZ/32)*32)/32+64));
-  return sample4(environment,u,v,128,262144).x;
+  return sample4(environment,u,v,128,65536).x;
 }
 
+// Half-resolution visible sky uses samples where the camera is looking.
+// No temporal history: rapid flight and lightning cannot leave ghost trails.
+__global__ void sky_view(float4 *environment,const float4 *weather,int width,int height,
+                          float camX,float camY,float camZ,float yaw,float pitch,float time){
+ int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+ int w=width/2,h=height/2;if(x>=w||y>=h)return;
+ float3 d=ray(2*((float)x+.5f)/(float)w-1,1-2*((float)y+.5f)/(float)h,(float)width/(float)height,yaw,pitch);
+ float3 col=d.y>0?volumeSky(d,weather,v3(camX,camY,camZ),time):sky(d);
+ environment[81920+y*w+x]=make_float4(col.x,col.y,col.z,1);
+}
+__device__ float3 cameraSky(const float4 *environment,int ix,int iy,int width,int height){
+ int w=width/2,h=height/2;
+ float u=fminf((float)w-1.001f,fmaxf(0,(float)ix*.5f-.25f));
+ float v=fminf((float)h-1.001f,fmaxf(0,(float)iy*.5f-.25f));
+ int x=(int)floorf(u),y=(int)floorf(v);
+ float4 a=mix4(environment[81920+y*w+x],environment[81920+y*w+x+1],frac(u));
+ float4 b=mix4(environment[81920+(y+1)*w+x],environment[81920+(y+1)*w+x+1],frac(u));
+ float4 col=mix4(a,b,frac(v));return v3(col.x,col.y,col.z);
+}
 // Buoy signed-distance geometry, oriented to the sampled water normal.
 __device__ float buoyDistance(float3 p) {
   float r = sqrtf(p.x * p.x + p.z * p.z);
@@ -712,7 +808,8 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
         sy = 1 - 2 * ((float)iy + .5f) / (float)height;
   float3 rd = ray(sx, sy, (float)width / (float)height, yaw, pitch),
          sun = v3(.08959f, .51504f, -.85247f), SUN = v3(6, 5.4f, 4.44f),
-         col = environmentSky(environment, rd);
+         col = cameraSky(environment,ix,iy,width,height);
+  col=add(col,stormBolt(rd,v3(camX,camY,camZ),weather,time));
   float visibleDistance = 100000;
   SUN = mul(SUN, environmentShadow(environment,camX,camZ,camX,camZ));
   if (rd.y < .0015f) {
@@ -733,6 +830,9 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
       nv = dot3(n, v);
     }
     float localStorm = stormAt(weather, P.x, P.z);
+    float4 impact=make_float4(0,0,0,0);
+    if(t<30)impact=oceanImpact(P.x,P.z,time,sat(weather[0].y+localStorm*.9f));
+    n=norm(add(n,v3(-impact.x,0,-impact.y)));
     SUN = mul(v3(6, 5.4f, 4.44f),
               environmentShadow(environment,P.x,P.z,camX,camZ));
     float gust =
@@ -742,7 +842,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float F = fresnel(nv);
     float3 rr = sub(wd, mul(n, 2 * dot3(wd, n)));
     rr.y = fabsf(rr.y);
-    float3 reflection = mul(environmentSky(environment, rr), 1.25f),
+    float3 reflection = mul(add(environmentSky(environment, rr),stormBolt(rr,P,weather,time)), 1.25f),
            h = norm(add(v, sun));
     float nh = fmaxf(0, dot3(n, h)), nl = fmaxf(0, dot3(n, sun)),
           a2 = .00012f + 1.2f * a.w + .000025f * t, c2 = fmaxf(nh * nh, .0001f),
@@ -810,11 +910,27 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float foamMask=sat(smooth(.015f,.32f,foamValue.x)*(.3f+.7f*lace)*(.35f+.65f*foamDetail)+foamValue.y*.4f);
     col = mix3(col, mul(v3(.73f, .81f, .78f), 1 - .5f * localStorm),
                foamMask * .85f);
+    col=add(col,mul(v3(.46f,.59f,.64f),impact.z));
+    // A bounded near-surface spray volume, sourced only by fresh breaking foam.
+    if(t<90 && weather[0].x>10){
+      float spray=0;
+      for(int j=0;j<3;j++){
+        float st=fmaxf(0,t-(float)(j+1)*1.4f);
+        float3 sp=v3(camX+wd.x*st,camY+wd.y*st,camZ+wd.z*st);
+        float4 sw=water(surface,rip,sp.x,sp.z,centerX,centerZ,st);
+        float altitude=sp.y-sw.x;
+        if(altitude>.015f&&altitude<.65f){
+          float4 sf=sample4(foam,(sp.x-weather[1].x*altitude)*256/37,(sp.z-weather[1].y*altitude)*256/37,256,0);
+          spray+=sf.y*expf(-altitude*7)*noise(sp.x*7-time*2,sp.z*7)*.16f;
+        }
+      }
+      col=mix3(col,v3(.46f,.55f,.61f),sat(spray));
+    }
     float haze = (1 - expf(-t * (.004f + .009f * localStorm))) * .8f;
     col = mix3(col,
                mix3(v3(.57f, .6745f, .779f), v3(.09f, .14f, .18f), localStorm),
                haze);
-    col = mix3(col, environmentSky(environment, rd),
+    col = mix3(col, cameraSky(environment,ix,iy,width,height),
                smooth(-.0005f, .0015f, rd.y));
     visibleDistance = t;
     if (view == 1)
@@ -823,24 +939,8 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
       col = add(mul(n, .5f), v3(.5f, .5f, .5f));
   }
 
-  // Rain streaks are a near-camera optical layer; impacts are actual ripple
-  // impulses.
-  float rain = sat(weather[0].y + stormAt(weather, camX, camZ) * .9f);
-  for (int layer = 0; layer < 2; layer++) {
-    float scale = layer == 0 ? 80.0f : 133.0f;
-    float slant =
-        .05f + .16f * (weather[1].x * cosf(yaw) + weather[1].y * sinf(yaw));
-    float rx = (sx + sy * slant) * scale;
-    unsigned column = (unsigned)(int)floorf(rx);
-    float ry = sy * scale * .25f + time * (layer == 0 ? 31.0f : 43.0f) +
-               random(column) * 17;
-    unsigned cellId = column * 1973u + (unsigned)(int)floorf(ry) * 9277u;
-    float cell = random(cellId), center = .15f + .7f * random(cellId + 91u);
-    float streak = smooth(.075f, 0, fabsf(frac(rx) - center)) *
-                   smooth(.49f, .16f, fabsf(frac(ry) - .5f));
-    col = add(col, mul(v3(.55f, .65f, .70f),
-                       streak * rain * (cell > .83f ? .12f : 0)));
-  }
+  float precipitation=rainVolume(v3(camX,camY,camZ),rd,visibleDistance,weather,time);
+  col=add(col,mul(v3(.45f,.56f,.66f),precipitation*.33f));
   // An anchored buoy gives the waves a readable physical scale.
   if (buoy != 0) {
     float bx = 2.3f, bz = -8;

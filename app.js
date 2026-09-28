@@ -188,11 +188,13 @@ async function resize() {
   if (!resizePending) return;
   resizePending = false;
   await rt.idle();
+  for (const kernel of Object.values(k)) kernel.clearBindings();
   width = +$("quality").value;
   height = Math.ceil((width * innerHeight) / innerWidth / 8) * 8;
   canvas.width = width;
   canvas.height = height;
-  for (const b of [hdr, ...(bloom || []), pixels]) if (b) rt.destroyBuffer(b);
+  for (const b of [environment, hdr, ...(bloom || []), pixels]) if (b) rt.destroyBuffer(b);
+  environment=rt.createBuffer((81920+width*height/4)*16);
   hdr = rt.createBuffer(width * height * 16);
   bloom = [
     rt.createBuffer(width * height * 16),
@@ -237,7 +239,7 @@ function waves(batch) {
     ),
     WG,
   );
-  batch.dispatch(k.chop_spectrum.bind({input:fft[0],output:chopFFT[0]}),WG);
+  batch.dispatch(k.chop_spectrum.bind({input:fft[0],output:chopFFT[0]},{sea:+$("energy").value}),WG);
   transform(batch,chopFFT,1);
   let src = 0;
   for (let axis = 0; axis < 2; axis++)
@@ -355,7 +357,8 @@ function render(timestampWrites, simulate = false) {
   const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
   if (simulate) { waves(batch); ripples(batch, 1/60); }
-  batch.dispatch(k.sky_environment.bind({environment,weather}, {camX:state.x,camY:state.y,camZ:state.z,time:state.time}),[128,32,1]);
+  batch.dispatch(k.sky_environment.bind({environment,weather}, {camX:state.x,camY:state.y,camZ:state.z,time:state.time}),[64,16,1]);
+  batch.dispatch(k.sky_view.bind({environment,weather},{width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch,time:state.time}),[Math.ceil(width/16),Math.ceil(height/16),1]);
   batch.dispatch(k.cloud_shadow.bind({environment,weather}, {camX:state.x,camZ:state.z,time:state.time}),[16,16,1]);
   batch
     .dispatch(k.clear_caustics.bind({ photons }), [64, 64, 1])
@@ -578,6 +581,7 @@ window.clearwaterLab = {
         }),
         { min: Infinity, max: -Infinity, finite: true },
       ),
+      compressionMin: (await rt.read(foam[foamIndex])).reduce((a,v,i)=>i%4===2?Math.min(a,v):a,Infinity),
       foamPeak: Math.max(
         ...(await rt.read(foam[foamIndex])).filter((_, i) => i % 4 === 0),
       ),
@@ -703,6 +707,7 @@ window.clearwaterLab = {
         );
       rt.destroyBuffer(a);
       rt.destroyBuffer(b);
+      k.fft_pass.clearBindings();
       return {
         maxError,
         roundtripError,
@@ -768,10 +773,22 @@ try {
         ? [64, 1, 1]
         : [8, 8, 1],
     });
+    const kernel = k[name], bindings = new Map();
+    k[name] = {
+      bind(buffers, scalars = {}) {
+        const key = kernel.artifact.metadata.bindings.map(binding => buffers[binding.name].id).join(":");
+        let invocation = bindings.get(key);
+        if (!invocation) {
+          invocation = kernel.bind(buffers, scalars);
+          bindings.set(key, invocation);
+        } else invocation.setScalars(scalars);
+        return invocation;
+      },
+      clearBindings() { bindings.clear(); },
+    };
   }
   chopFFT=[rt.createBuffer(3*65536*16),rt.createBuffer(3*65536*16)];
   linearSurface=rt.createBuffer(3*65536*16);
-  environment = rt.createBuffer((262144+16384)*16);
   weather = rt.createBuffer(2 * 16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
   foam = [rt.createBuffer(65536 * 16), rt.createBuffer(65536 * 16)];
