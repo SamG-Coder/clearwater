@@ -5,8 +5,8 @@
       "width": 1152,
       "height": 720,
       "samples": 40,
-      "renderGpuMedianMs": 2.101888,
-      "renderGpuP95Ms": 3.35936,
+      "renderGpuMedianMs": 2.098784,
+      "renderGpuP95Ms": 3.632384,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",
@@ -32,8 +32,8 @@
         "width": 1152,
         "height": 720,
         "samples": 40,
-        "renderGpuMedianMs": 2.24624,
-        "renderGpuP95Ms": 3.63296,
+        "renderGpuMedianMs": 2.237216,
+        "renderGpuP95Ms": 3.798048,
         "adapter": {
           "vendor": "nvidia",
           "architecture": "blackwell",
@@ -61,8 +61,8 @@
       "width": 1152,
       "height": 720,
       "samples": 40,
-      "renderGpuMedianMs": 2.304576,
-      "renderGpuP95Ms": 3.479648,
+      "renderGpuMedianMs": 2.31536,
+      "renderGpuP95Ms": 4.020832,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",
@@ -88,8 +88,8 @@
         "width": 1152,
         "height": 720,
         "samples": 40,
-        "renderGpuMedianMs": 2.459488,
-        "renderGpuP95Ms": 3.831584,
+        "renderGpuMedianMs": 2.483872,
+        "renderGpuP95Ms": 4.016032,
         "adapter": {
           "vendor": "nvidia",
           "architecture": "blackwell",
@@ -117,8 +117,8 @@
       "width": 1152,
       "height": 720,
       "samples": 40,
-      "renderGpuMedianMs": 2.382016,
-      "renderGpuP95Ms": 3.667136,
+      "renderGpuMedianMs": 2.364704,
+      "renderGpuP95Ms": 4.007456,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",
@@ -144,8 +144,8 @@
         "width": 1152,
         "height": 720,
         "samples": 40,
-        "renderGpuMedianMs": 2.482816,
-        "renderGpuP95Ms": 3.880992,
+        "renderGpuMedianMs": 2.49648,
+        "renderGpuP95Ms": 3.956384,
         "adapter": {
           "vendor": "nvidia",
           "architecture": "blackwell",
@@ -219,10 +219,10 @@
     "stats": {
       "pipelineCompiles": 28,
       "pipelineCacheHits": 0,
-      "bindGroupsCreated": 61220,
-      "submissions": 1284,
-      "dispatches": 61220,
-      "uniformBytesUploaded": 14031872,
+      "bindGroupsCreated": 38,
+      "submissions": 1282,
+      "dispatches": 61137,
+      "uniformBytesUploaded": 14291680,
       "dataBytesUploaded": 17563648,
       "readbackBytes": 27951104
     }

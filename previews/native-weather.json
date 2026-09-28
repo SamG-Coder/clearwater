@@ -2,6 +2,6 @@
   "passed": true,
   "peakSpectralEnergy": 22.1285,
   "residualSpectralEnergy": 19.6107,
-  "foamPeak": 0.25975,
+  "foamPeak": 1,
   "settledWind": 5.46317
 }

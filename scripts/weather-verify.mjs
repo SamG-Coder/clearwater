@@ -84,7 +84,7 @@ try {
     })),
     paused,
   );
-  await page.evaluate(() => clearwaterLab.seek(28.0)); // Double lightning pulse.
+  await page.evaluate(() => clearwaterLab.seek(32.93713468687923)); // Seeded irregular lightning pulse.
   await page.screenshot({ path: "previews/weather-lightning.png" });
   await page.evaluate(() => clearwaterLab.weatherAdvance(1200));
   const aftermath = await page.evaluate(() => clearwaterLab.weatherInspect());

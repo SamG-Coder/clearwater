@@ -7,8 +7,8 @@
       "width": 768,
       "height": 480,
       "samples": 40,
-      "renderGpuMedianMs": 1.3968,
-      "renderGpuP95Ms": 2.55616,
+      "renderGpuMedianMs": 1.382848,
+      "renderGpuP95Ms": 1.389088,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",
@@ -35,8 +35,8 @@
       "width": 1152,
       "height": 720,
       "samples": 40,
-      "renderGpuMedianMs": 1.734144,
-      "renderGpuP95Ms": 1.742976,
+      "renderGpuMedianMs": 1.71664,
+      "renderGpuP95Ms": 1.876896,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",
@@ -63,8 +63,8 @@
       "width": 1536,
       "height": 960,
       "samples": 40,
-      "renderGpuMedianMs": 2.214848,
-      "renderGpuP95Ms": 3.569728,
+      "renderGpuMedianMs": 2.193856,
+      "renderGpuP95Ms": 3.65568,
       "adapter": {
         "vendor": "nvidia",
         "architecture": "blackwell",

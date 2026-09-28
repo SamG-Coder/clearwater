@@ -10,3 +10,7 @@ previews/export.png
 dist/
 Native/build/
 Native/output/
+
+# Intermediate browser video capture and inspection frames
+previews/quality/motion-source/
+previews/quality/motion-check-*.png

@@ -24,7 +24,7 @@ Rain falls downward with a wind slant. Deterministic world-space drop events dri
 
 [`pool/pool.cu`](pool/pool.cu) supplies the geometry, procedural stone and ceramic materials, pool dynamics, ray-traced reflection/refraction, and shallow-water optics. It compiles together with the existing [`src/clearwater.cu`](src/clearwater.cu), reusing the FFT, spectral weather response, sky, Fresnel optics, photon filtering, and tone mapping. Only the short 4.6 m FFT band contributes to pool wind ripples; ocean swell is excluded. The scene contains no terrain or imported models/textures.
 
-This is a real-time visual approximation: FFT wind ripples taper near the wall, the bounded solver handles rain and click impulses, and the RGB photon map uses a representative 1.5 m depth rather than a full light-transport solve on every step and wall. The pool is currently a browser sub-demo; the existing native ocean application is unchanged. Actions compile both CUDA demo paths for WebGPU and package both Pages entry points; they do not build native CUDA.
+This is a real-time visual approximation: FFT wind ripples taper near the wall, the bounded solver handles rain and click impulses, and the RGB photon map uses a representative 1.5 m depth rather than a full light-transport solve on every step and wall. The pool is currently a browser sub-demo; the native application runs the main ocean demo. Actions compile all CUDA demo paths for WebGPU and package all three Pages entry points; they do not build native CUDA.
 
 Run `npm run test:pool` against the local server on port 5186 for GPU residency, bounded-ripple, weather, pause, controls, and screenshot checks.
 
@@ -62,9 +62,10 @@ Click **Send a storm** and watch the horizon. The default showcase advances weat
 
 - A moving world-space storm band drives local rain, cloud cover, visibility and wind forcing at the camera.
 - A JONSWAP-shaped directional weighting redistributes energy in the short and medium FFT bands. Stored spectral energy responds gradually; decay is slower than growth, and the independent long swell is preserved.
-- Raindrops inject impulses into the existing 120 Hz ripple solver. Wind-slanted rain streaks and a distant rain veil make the rainfall visible.
-- Eight cloud layers approximate an atmospheric volume. Clouds dim sunlight and caustics, with the same sky sampled for water reflections. Lightning illuminates that sky and reflects across the waves.
-- Strong, elevated crests generate foam in a persistent GPU field, advected with wind drift and faded over time.
+- World-space impact events drive visible crowns/rings and impulses in the 120 Hz ripple solver. Nearby rain uses wind-advected world planes with ray-depth occlusion; distant rain curtains soften the horizon. Airborne streaks are a statistical approximation, not individually tracked drops tied to every impact.
+- Irregular seeded lightning lights nearby cloud density and produces a high-resolution bolt and water reflection. Pause freezes clouds, rain and lightning as well as the waves.
+- Three-dimensional cloud density is integrated with 72 bounded ray steps, rounded cellular detail, sun self-shadowing and approximate multiple scattering. A half-resolution camera pass resolves visible clouds; a 512 x 128 environment map supplies reflections. A 128 x 128 world-space shadow map uses the same density to dim sunlight and caustics.
+- A second packed FFT supplies horizontal crest displacement. Surface compression generates persistent, advected whitecaps, with a faster-decaying fresh-foam channel feeding a small near-surface spray volume. Horizontal displacement is limited at high wave-energy settings.
 - Wind, direction, storm strength, rain and cloud cover have separate controls. The optional marker buoy follows the sampled height and slope; it is a visual scale reference.
 
 ![Passing storm](previews/weather-storm.png)
@@ -75,10 +76,10 @@ Click **Send a storm** and watch the horizon. The default showcase advances weat
 |---|---|
 | Spectrum | Seeded Gaussian complex coefficients, directional spectral bumps and GPU RMS slope normalization |
 | Wave evolution | Gravity/capillary dispersion with finite-depth tanh(k·depth), per-mode wind-energy memory |
-| Weather | Moving storm band, lagged local wind, layered clouds, shadow attenuation, rain optics and reflected lightning |
-| Foam | Persistent 256² field, crest/slope source, wind advection and exponential decay |
+| Weather | Irregular moving storm band, lagged local wind, cached volumetric clouds, shared-density shadows, depth-aware rain and local lightning |
+| Foam | Persistent 256² compression-driven coverage and fresh-foam channels, advection, decay and bounded spray |
 | Infinite surface | Three independently seeded 256² periodic cascades spanning 4.6 m, 37 m and 293 m, sampled in world space |
-| FFT | 16 Stockham butterfly passes per 2D transform, two packed complex fields; height and analytic slopes |
+| FFT | 16 Stockham butterfly passes per 2D transform, two packed complex fields; height, analytic slopes and horizontal displacement |
 | Interaction | 256² camera-relative ripple field, 16 m wide, fixed 120 Hz wave equation and integer-cell recentering |
 | Caustics | 1024² refracted rays, three refractive indices, bilinear fixed-point atomic splats into a 512² RGB field |
 | Water optics | Height-field intersection, Fresnel reflection, Snell refraction, Beer–Lambert extinction, underwater scattering, pebble/sand seabed and sun highlights |
@@ -98,7 +99,7 @@ npm run test:weather
 
 `npm test` launches installed Microsoft Edge through Playwright with WebGPU. The validation port is 5186. Latest evidence is in [`previews/verification.json`](previews/verification.json).
 
-- All 22 CUDA entries compile through the vendored CUDA frontend.
+- All 36 CUDA entries (28 shared/main, plus pool and cube kernels) compile through the vendored CUDA frontend.
 - The native application built with CUDA Toolkit 13.3 and passed its GPU smoke test on an RTX 5080: FFT error **2.47e-7**, ripple generation, 6x Shift boost, separate windows, resizing, diagnostic views and finite values at 10 km. See [`previews/native-smoke.json`](previews/native-smoke.json). Full manual control-window QA remains incomplete.
 - Weather validation passes in Edge/WebGPU and native CUDA: the medium-wave band RMS rises from **0.086 m to 0.194 m** in the recorded browser scenario, rain generates nonzero ripple heights, foam remains bounded, pause freezes both clocks, and stored wave energy remains elevated after the wind eases. See [`previews/weather-verification.json`](previews/weather-verification.json) and [`previews/native-weather.json`](previews/native-weather.json). These are implementation checks, not oceanographic calibration.
 - GPU 2D FFT compared against five analytic Fourier modes across both axes, all three cascades and both complex fields: maximum absolute error **3.89e-7**.
@@ -110,13 +111,23 @@ npm run test:weather
 - No browser console errors, page errors, failed HTTP requests or WebGPU validation errors in the recorded run.
 - Visual captures inspected for shallow water and open water on an NVIDIA Blackwell adapter in Edge. Other hardware/browser combinations have not been tested.
 
+## Main-demo quality and performance checks
+
+Run `npm run test:quality` with the server on port 5186 for fixed-camera calm/front/storm screenshots, GPU timestamps, resolution checks, bit-identical pause checks, and maximum-energy/wind stress views. `node scripts/frame-profile.mjs host-current` measures 100 live frames including CPU command preparation and GPU completion. These scripts use installed Edge and real WebGPU; the normal render loop performs no readbacks.
+
+The baseline and stage captures are preserved under [`previews/quality/`](previews/quality/). Baseline rendering at 1152 x 720 took about **4.30–4.34 ms median GPU time** on the tested NVIDIA RTX 5080 / Edge system. The expanded renderer is roughly **2.1–2.4 ms** for the same rendering scope, or **2.2–2.5 ms** including wave computation and two ripple substeps in the fixed-camera cases. See [`final.json`](previews/quality/final.json) for exact medians, p95 values and measurement scope. These are GPU workload measurements, not delivered browser FPS or a promise for other hardware.
+
+Reusing GPU bindings lowered measured live frame work from **5.50 ms to 4.78 ms median** in separate 100-frame runs. Both report zero readbacks. Resolution and camera angle materially change cost; the quality check records both. Native builds and smoke checks remain local-only.
+
+We deliberately avoid temporal cloud history: the visible sky is recomputed each frame, so camera turns and lightning cannot drag old cloud images across the screen. Reflections use a lower-resolution environment map centred on the camera, so they approximate cloud parallax at distant water points. The shadow map covers 4 km around the camera and clamps outside that region. Impact crowns perturb shading; they are not fully meshed airborne splash geometry.
+
 ## Scope and tradeoffs
 
 “Infinite” means there is no finite mesh edge or camera travel boundary. The wave fields remain periodic, as FFT oceans are; combining three scales reduces obvious repetition. It is not an infinitely large stored simulation. World coordinates and GPU math use 32-bit floats, so precision eventually deteriorates at extreme travel distances; 10 km coordinates are covered by the test.
 
-The weather system is a visual, physically motivated approximation, not a forecast or a calibrated wind/fetch model. Wind forcing is uniform across the FFT tiles and sampled from the front at the camera; spatial gust shading does not solve local fluid momentum. Foam uses a slope/height heuristic, clouds use layered density integration, and the buoy uses surface-following animation rather than rigid-body buoyancy.
+The weather system is a visual, physically motivated approximation, not a forecast or a calibrated wind/fetch model. Wind forcing is uniform across the FFT tiles and sampled from the front at the camera; spatial gust shading does not solve local fluid momentum. Foam is sourced from the horizontal-displacement Jacobian with height and wind gates. Clouds integrate procedural density with approximate scattering. The buoy uses surface-following animation rather than rigid-body buoyancy.
 
-This is a linear spectral height-field ocean. It does not simulate overturning breakers, spray, volumetric water or an underwater camera. Shallow caustics are driven by the short-wave cascade at the selected mean depth, with local ripple curvature added during shading; the long-wave cascades are not included in the photon map. The caustic map and seabed remain periodic. Distant headlands are a procedural sky silhouette, not traversable terrain.
+This is a spectral height-field ocean with bounded horizontal crest displacement. It does not simulate overturning breakers, volumetric water or an underwater camera. Spray is a small visual volume sourced by fresh foam, not a particle-based fluid solve. Shallow caustics are driven by the short-wave cascade at the selected mean depth, with local ripple curvature added during shading; the long-wave cascades are not included in the photon map. The caustic map and seabed remain periodic. Distant headlands are a procedural sky silhouette, not traversable terrain.
 
 The optical design is reimplemented, not a pixel-identical port: the lens uses three representative wavelengths, and compute filtering replaces WebGL derivatives and texture mipmaps. The unused original WebGL application, old media/tools and unused vendor helpers have been removed; they remain available in Git history. The browser targets CUDA WebShader, while `Native/main.cu` directly includes the same kernels for native CUDA execution.
 

@@ -36,4 +36,4 @@ CUDA renders the complete image into a device buffer. CUDA–D3D11 interop trans
 
 The smoke run opens both windows, tests the shared FFT against analytic reference modes, tests fly-camera directions/speed, generates a ripple, verifies finite simulation/HDR values at 10 km coordinates, exercises resize/diagnostic/glare paths, tests storm growth, foam, finite storm optics and residual wave energy after the wind settles, and writes PNG captures plus `output/native-smoke.json` and `output/native-weather.json`. A failure returns exit code 1 and writes `output/error.log`.
 
-The browser and native hosts use the same 22 kernels, spectrum dimensions and optical settings. GPU float math/compiler differences can cause small image differences. The same height-field and extreme-distance precision limitations as the browser version apply.
+The browser and native hosts use the same 28 main-demo kernels, spectrum dimensions and optical settings. GPU float math/compiler differences can cause small image differences. The same height-field and extreme-distance precision limitations as the browser version apply.
