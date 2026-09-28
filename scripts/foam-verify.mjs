@@ -1,6 +1,8 @@
 import {chromium} from 'playwright';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 const tag=process.argv[2]||'after';
 const out='previews/foam';
 await mkdir(out,{recursive:true});
@@ -12,7 +14,7 @@ try {
  const source=(await readFile('app.js','utf8')).replace('window.clearwaterLab = {',`window.clearwaterLab = {
  async foamStats(){return exclusive(async()=>{
   const data=await rt.read(foam[foamIndex]);let total=0,fresh=0,covered=0,peak=0;
-  for(let i=0;i<data.length;i+=4){total+=data[i];fresh+=data[i+1];covered+=data[i]>.1?1:0;peak=Math.max(peak,data[i]);}
+  for(let i=0;i<65536*4;i+=4){total+=data[i];fresh+=data[i+1];covered+=data[i]>.1?1:0;peak=Math.max(peak,data[i]);}
   return {mean:total/65536,fresh:fresh/65536,covered:covered/65536,peak,finite:Array.from(data).every(Number.isFinite)};
  });},`);
  await page.route('**/app.js',r=>r.fulfill({contentType:'text/javascript',body:source}));
@@ -38,14 +40,29 @@ try {
  await page.screenshot({path:`${out}/${tag}-close.png`});
  await page.evaluate(()=>clearwaterLab.weatherAdvance(30));
  await page.screenshot({path:`${out}/${tag}-close-next.png`});
+ if(process.argv.includes('--motion')){
+  const encoder=spawn('ffmpeg',['-y','-hide_banner','-loglevel','error','-f','image2pipe','-framerate','30','-vcodec','png','-i','pipe:0','-an','-c:v','h264_nvenc','-preset','p7','-cq','18','-pix_fmt','yuv420p','-movflags','+faststart',`${out}/${tag}-motion.mp4`],{windowsHide:true,stdio:['pipe','ignore','pipe']});
+  const done=once(encoder,'close');let encoderErrors='';encoder.stderr.on('data',d=>encoderErrors+=d);
+  encoder.stdin.on('error',()=>{});
+  try{
+   for(let frame=0;frame<90;frame++){
+    await page.evaluate(()=>clearwaterLab.weatherAdvance(1));
+    const png=await page.screenshot({type:'png'});
+    await new Promise((resolve,reject)=>encoder.stdin.write(png,e=>e?reject(e):resolve()));
+    if(frame%30===0){await writeFile(`${out}/${tag}-motion-${frame}.png`,png);console.log(`Motion check ${frame+1}/90`);}
+   }
+  }finally{encoder.stdin.end();}
+  const [code]=await done;assert.equal(code,0,encoderErrors);
+ }
  await page.evaluate(()=>{Object.assign(clearwaterLab.state,{weatherAge:-1,wind:5,rain:0});});
  await page.evaluate(()=>clearwaterLab.seek(36));
  await page.screenshot({path:`${out}/${tag}-isolated.png`});
+ result.decayStart=await page.evaluate(()=>clearwaterLab.foamStats());
  await page.evaluate(()=>clearwaterLab.weatherAdvance(300));
  result.decay=await page.evaluate(()=>clearwaterLab.foamStats());
  assert.ok(result.storm.finite&&result.decay.finite);
  assert.ok(result.storm.peak>.001&&result.storm.peak<=1);
- assert.ok(result.decay.mean<result.storm.mean*.15,'foam must dissipate after breaking stops');
+ assert.ok(result.decay.mean<result.decayStart.mean*.15,'foam must dissipate after breaking stops');
  assert.deepEqual(errors,[]);
  await writeFile(`${out}/${tag}.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
 }finally{await browser.close();}

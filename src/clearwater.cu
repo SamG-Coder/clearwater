@@ -85,6 +85,17 @@ __device__ float foamNoise(float x,float z){
         +foamCorner(ix+1,iz+1,px-.577350269f,pz-.577350269f);
  return sat(.5f+n*35);
 }
+// Connected bubble films around irregular cells; no thresholded noise dots.
+__device__ float foamFilms(float x,float z,float thickness){
+ float ix=floorf(x),iz=floorf(z),u=frac(x),v=frac(z),nearest=9;
+ for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
+  float px=i+.1f+.8f*hash(ix+i,iz+j)-u;
+  float pz=j+.1f+.8f*hash(ix+i+193,iz+j-71)-v;
+  float radius=(.17f+.39f*hash(ix+i-57,iz+j+313))*(1.35f-thickness);
+  nearest=fminf(nearest,(px*px+pz*pz)/(radius*radius));
+ }
+ return smooth(.72f,1.15f,nearest);
+}
 __device__ int wrap(int x, int n) { return (x % n + n) % n; }
 __device__ float lengthL(int c) {
   return c == 0 ? 4.6f : (c == 1 ? 37.0f : 293.0f);
@@ -331,19 +342,36 @@ __global__ void ocean_foam(const float4 *surface,const float4 *displacement,cons
  if(x>=256||z>=256)return;
  int id=z*256+x;
  float4 a=surface[65536+id];
- float4 xp=displacement[65536+z*256+wrap(x+1,256)],xm=displacement[65536+z*256+wrap(x-1,256)];
- float4 zp=displacement[65536+wrap(z+1,256)*256+x],zm=displacement[65536+wrap(z-1,256)*256+x];
+ // Match the inverse displacement map used by chop_surface; evaluating the
+ // Jacobian on the original grid places whitecaps beside the rendered crest.
+ float sx=x,sz=z;
+ for(int i=0;i<3;i++){
+  float4 d=sample4(displacement,sx,sz,256,65536);
+  sx=x-fminf(6,fmaxf(-6,d.x*256/37));sz=z-fminf(6,fmaxf(-6,d.y*256/37));
+ }
+ float4 xp=sample4(displacement,sx+1,sz,256,65536),xm=sample4(displacement,sx-1,sz,256,65536);
+ float4 zp=sample4(displacement,sx,sz+1,256,65536),zm=sample4(displacement,sx,sz-1,256,65536);
  float xx=1+(xp.x-xm.x)*128/37,zz=1+(zp.y-zm.y)*128/37;
  float jac=xx*zz-(zp.x-zm.x)*(xp.y-xm.y)*square(128.0f/37);
- float steep=sqrtf(a.y*a.y+a.z*a.z);
  // Spawn on compressed positive crests, not the broad shoulders of every wave.
  float breaking=smooth(.80f,.50f,jac)*smooth(.035f,.16f,a.x)*smooth(7,17,weather[0].x);
- float drift=weather[0].x*.035f;
- float4 old=sample4(previous,(float)x-(weather[1].x*drift+a.y*.4f)*dt*256/37,
-                              (float)z-(weather[1].y*drift+a.z*.4f)*dt*256/37,256,0);
- float cover=sat(old.x*expf(-dt*.42f)+breaking*dt*2.2f);
- float fresh=sat(old.y*expf(-dt*3.4f)+breaking*dt*7);
- next[id]=make_float4(cover,fresh,jac,steep);
+ // The second plane stores displacement history and advected material offsets.
+ // Use surface motion, not a global scrolling texture, to stretch old trails.
+ float4 disp=sample4(displacement,sx,sz,256,65536),history=previous[65536+id];
+ float invDt=dt>0?1/fmaxf(dt,.001f):0;
+ float vx=fminf(2,fmaxf(-2,(disp.x-history.x)*invDt))+weather[1].x*weather[0].x*.016f;
+ float vz=fminf(2,fmaxf(-2,(disp.y-history.y)*invDt))+weather[1].y*weather[0].x*.016f;
+ float qx=x-vx*dt*256/37,qz=z-vz*dt*256/37;
+ float4 old=sample4(previous,qx,qz,256,0);
+ float4 material=sample4(previous,qx,qz,256,65536);
+ float deposited=1-expf(-breaking*dt*3.5f);
+ float cover=sat(old.x*expf(-dt*.30f)+(1-old.x)*deposited);
+ float fresh=sat(old.y*expf(-dt*2.5f)+(1-old.y)*deposited*1.7f);
+ // Density-weighted age: a new breaker renews the patch rather than making
+ // unrelated bits of noise appear. Old patches thin and open up over time.
+ float age=cover>.0001f?(old.w+dt)*(1-sat(deposited/fmaxf(cover,.001f))):0;
+ next[id]=make_float4(cover,fresh,jac,fminf(age,30));
+ next[65536+id]=make_float4(disp.x,disp.y,material.z+vx*dt,material.w+vz*dt);
 }
 
 __device__ float3 ray(float sx, float sy, float aspect, float yaw,
@@ -941,26 +969,28 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float hx=floorf(gx)+1+dx/(cx+dx),hz=floorf(gz)+1+dz/(cz+dz);
     float4 foamValue=mix4(mix4(sample4(foam,lx,lz,256,0),sample4(foam,hx,lz,256,0),cx+dx),
                           mix4(sample4(foam,lx,hz,256,0),sample4(foam,hx,hz,256,0),cx+dx),cz+dz);
-    float fx=P.x-time*weather[1].x*weather[0].x*.035f;
-    float fz=P.z-time*weather[1].y*weather[0].x*.035f;
-    // Rotate and warp detail to remove the square value-noise lattice. No
-    // minimum opacity: weak trails open into separate islands and disappear.
-    float fu=fx*.8f+fz*.6f,fv=fz*.8f-fx*.6f;
-    float warp=foamNoise(fu*3.1f,fv*3.1f)-.5f;
-    float lace=(.7f*foamNoise(fu*19+warp*.8f,fv*19-warp*.7f)+.3f*foamNoise(fu*31-fv*17+9,fv*31+fu*17));
-    float fine=foamNoise((fu*.6f-fv*.8f)*85+warp,(fv*.6f+fu*.8f)*38);
-    float pixel=t*1.25f/height/fmaxf(.18f,nv);
-    fine=lerp(fine,.5f,smooth(.005f,.035f,pixel));
-    float density=sat(foamValue.x*2.2f+foamValue.y*1.2f);
-    float threshold=.70f-density*.56f;
-    float islands=smooth(threshold-.13f,threshold+.13f,lace*.78f+fine*.22f);
-    islands*=.45f+.55f*smooth(.28f,.7f,fine);
-    // Filter coverage, not the noise before thresholding: the latter turns
-    // unresolved bubbles into solid white slabs at middle distance.
-    islands=lerp(islands,density*density*.65f,smooth(.018f,.09f,pixel));
-    float foamMask=sat(islands*smooth(.018f,.17f,density)+foamValue.y*.35f);
-    float3 foamLight=mul(v3(.76f,.81f,.82f),(.65f+.35f*nl)*(1-.42f*localStorm));
-    col=mix3(col,foamLight,foamMask*.94f);
+    if(foamValue.x>.003f||foamValue.y>.003f){
+      float4 material=sample4(foam,gx,gz,256,65536);
+      float fx=P.x-material.z,fz=P.z-material.w;
+      float fu=fx*.8f+fz*.6f,fv=fz*.8f-fx*.6f;
+      float pixel=t*1.25f/height/fmaxf(.18f,nv);
+      float young=smooth(.015f,.20f,foamValue.y);
+      float age=smooth(.3f,4,foamValue.w);
+      // Open connected holes in a continuous film. Microbubbles modulate its
+      // light, never punch the entire patch into uniform detached speckles.
+      float folds=foamNoise(fu*1.7f,fv*1.7f);
+      float thickness=lerp(.26f,.06f,age);
+      float films=foamFilms(fu*32+folds*1.8f,fv*32-folds*1.8f,thickness);
+      films=lerp(films,lerp(.64f,.38f,age),smooth(.003f,.025f,pixel));
+      float thinning=lerp(1,smooth(.16f,.70f,folds),age*.8f);
+      float residue=smooth(.008f,.36f,foamValue.x)*thinning*(.12f+.88f*films);
+      float film=lerp(residue,1,young);
+      float opacity=1-expf(-film*(1.25f+young*1.8f));
+      float bubbles=lerp(foamNoise(fu*48,fv*48),.5f,smooth(.004f,.025f,pixel));
+      float3 foamLight=mul(v3(.79f,.83f,.82f),(.76f+.24f*nl)*(1-.40f*localStorm));
+      foamLight=mul(foamLight,.88f+.12f*bubbles);
+      col=mix3(col,foamLight,opacity);
+    }
     col=add(col,mul(v3(.46f,.59f,.64f),impact.z));
     // A bounded near-surface spray volume, sourced only by fresh breaking foam.
     if(t<90 && weather[0].x>10){

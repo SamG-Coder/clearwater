@@ -71,7 +71,7 @@ struct App {
  void transform(float4* a,float4* b,float sign){for(int axis=0;axis<2;axis++)for(int p=1;p<256;p*=2){fft_pass<<<wavesGrid,block>>>(a,b,p,axis,sign);std::swap(a,b);}}
  void initGpu(){
   chopFFT[0].alloc(3*65536);chopFFT[1].alloc(3*65536);linearSurface.alloc(3*65536);
-  weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(65536);
+  weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(2*65536);
   seed.alloc(3*65536);rows.alloc(768);scales.alloc(3);surface.alloc(3*65536);ripNormals.alloc(65536);photons.alloc(512*512*3);caustics.alloc(512*512);lensKernel.alloc(3*65536);
   for(int i=0;i<2;i++){fft[i].alloc(3*65536);rip[i].alloc(65536);lens[i].alloc(3*65536);}
   decodeAsset();seed_spectrum<<<wavesGrid,block>>>(seed.p,7);spectrum_rows<<<12,64>>>(seed.p,rows.p);spectrum_norm<<<1,64>>>(rows.p,scales.p);
@@ -160,7 +160,7 @@ struct App {
   cam=Camera{};cam.pitch=-.17f;quality=1152;resizePending=true;resize();energy=1;depth=1.6f;time=5;command(Storm,0);
   for(int i=0;i<900;i++)step(1.f/30);draw();png(outputDir/L"native-storm.png");
   auto stormEnergy=spectralEnergy.read();float maxStorm=0;for(float e:stormEnergy){require(std::isfinite(e),"Non-finite storm spectrum");maxStorm=std::max(maxStorm,e);}require(maxStorm>2,"Storm did not grow waves");
-  auto stormFoam=foam[foamIndex].read();float maxFoam=0;for(auto f:stormFoam)maxFoam=std::max(maxFoam,f.x);require(maxFoam>.001f,"No storm foam generated");
+  auto stormFoam=foam[foamIndex].read();float maxFoam=0;for(int i=0;i<65536;i++)maxFoam=std::max(maxFoam,stormFoam[i].x);require(maxFoam>.001f,"No storm foam generated");
   auto stormImage=hdr.read();for(auto c:stormImage)require(std::isfinite(c.x)&&std::isfinite(c.y)&&std::isfinite(c.z),"Non-finite storm HDR");
   command(Fair,0);for(int i=0;i<90;i++)step(1.f/30);auto residual=spectralEnergy.read();float maxResidual=0;for(float e:residual)maxResidual=std::max(maxResidual,e);require(maxResidual>1.1f&&maxResidual<maxStorm,"Wave memory/decay mismatch");
   auto weatherState=weather.read();require(weatherState[0].x<7,"Wind failed to settle");

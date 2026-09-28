@@ -581,9 +581,9 @@ window.clearwaterLab = {
         }),
         { min: Infinity, max: -Infinity, finite: true },
       ),
-      compressionMin: (await rt.read(foam[foamIndex])).reduce((a,v,i)=>i%4===2?Math.min(a,v):a,Infinity),
+      compressionMin: (await rt.read(foam[foamIndex])).slice(0,65536*4).reduce((a,v,i)=>i%4===2?Math.min(a,v):a,Infinity),
       foamPeak: Math.max(
-        ...(await rt.read(foam[foamIndex])).filter((_, i) => i % 4 === 0),
+        ...(await rt.read(foam[foamIndex])).slice(0,65536*4).filter((_, i) => i % 4 === 0),
       ),
     }));
   },
@@ -791,7 +791,7 @@ try {
   linearSurface=rt.createBuffer(3*65536*16);
   weather = rt.createBuffer(2 * 16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
-  foam = [rt.createBuffer(65536 * 16), rt.createBuffer(65536 * 16)];
+  foam = [rt.createBuffer(2 * 65536 * 16), rt.createBuffer(2 * 65536 * 16)];
   lensKernel = rt.createBuffer(3 * 65536 * 16);
   lensFFT = [rt.createBuffer(3 * 65536 * 16), rt.createBuffer(3 * 65536 * 16)];
   seed = rt.createBuffer(3 * 65536 * 8);
