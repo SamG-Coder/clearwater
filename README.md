@@ -2,7 +2,7 @@
 
 A CUDA reimplementation of [Aurélien / Lumaris's Clearwater](https://github.com/Aureliengmz/clearwater), extended with three FFT ocean scales, a moving weather front, and unrestricted camera travel.
 
-**[Launch the live demo](https://samg-coder.github.io/clearwater/)** · [Native Windows version](Native/README.md)
+**[Launch the live demo](https://samg-coder.github.io/clearwater/)** · [Native Windows version](Native/README.md) · [Pages deployment status](https://github.com/SamG-Coder/clearwater/actions/workflows/pages.yml)
 
 **[Explore the pool study](https://samg-coder.github.io/clearwater/pool/)** — a separate CUDA demo focused on a curved swimming pool and its tilework.
 
@@ -65,7 +65,7 @@ Click **Send a storm** and watch the horizon. The default showcase advances weat
 - World-space impact events drive visible crowns/rings and impulses in the 120 Hz ripple solver. Nearby rain uses wind-advected world planes with ray-depth occlusion; distant rain curtains soften the horizon. Airborne streaks are a statistical approximation, not individually tracked drops tied to every impact.
 - Irregular seeded lightning lights nearby cloud density and produces a high-resolution bolt and water reflection. Pause freezes clouds, rain and lightning as well as the waves.
 - Three-dimensional cloud density is integrated with 72 bounded ray steps, rounded cellular detail, sun self-shadowing and approximate multiple scattering. A half-resolution camera pass resolves visible clouds; a 512 x 128 environment map supplies reflections. A 128 x 128 world-space shadow map uses the same density to dim sunlight and caustics.
-- A second packed FFT supplies horizontal crest displacement. Surface compression generates persistent, advected whitecaps, with a faster-decaying fresh-foam channel feeding a small near-surface spray volume. Horizontal displacement is limited at high wave-energy settings.
+- A second packed FFT supplies horizontal crest displacement. Surface compression generates persistent, advected whitecaps, with a faster-decaying fresh-foam channel feeding a small near-surface spray volume. Horizontal displacement is limited at high wave-energy settings. Spectral displacement derivatives share the existing FFT channels, adding no FFT passes. Foam builds from compression and slope, with a transported underwater bubble layer and no independent procedural foam mask. See the [FFT foam implementation and verification notes](previews/foam/FFT-FOAM.md) for performance results and the remaining close-up visual limitations.
 - Wind, direction, storm strength, rain and cloud cover have separate controls. The optional marker buoy follows the sampled height and slope; it is a visual scale reference.
 
 ![Passing storm](previews/weather-storm.png)
@@ -77,7 +77,7 @@ Click **Send a storm** and watch the horizon. The default showcase advances weat
 | Spectrum | Seeded Gaussian complex coefficients, directional spectral bumps and GPU RMS slope normalization |
 | Wave evolution | Gravity/capillary dispersion with finite-depth tanh(k·depth), per-mode wind-energy memory |
 | Weather | Irregular moving storm band, lagged local wind, cached volumetric clouds, shared-density shadows, depth-aware rain and local lightning |
-| Foam | Persistent 256² compression-driven coverage and fresh-foam channels, advection, decay and bounded spray |
+| Foam | Persistent 512² coverage, freshness and age; spectral Jacobian + slope breaking, transport, submerged bubble density and decay |
 | Infinite surface | Three independently seeded 256² periodic cascades spanning 4.6 m, 37 m and 293 m, sampled in world space |
 | FFT | 16 Stockham butterfly passes per 2D transform, two packed complex fields; height, analytic slopes and horizontal displacement |
 | Interaction | 256² camera-relative ripple field, 16 m wide, fixed 120 Hz wave equation and integer-cell recentering |
