@@ -500,6 +500,123 @@ __device__ float3 weatherSky(float3 d, const float4 *weather, float x, float z,
   }
   return base;
 }
+// Main-demo cloud volume. Environment radiance and cloud shadows share density.
+// Cached on the GPU once per frame instead of marching for every water pixel.
+__device__ float noise3(float3 p) {
+  float y = floorf(p.y), f = frac(p.y); f = f*f*(3-2*f);
+  return lerp(noise(p.x + y*37, p.z + y*17),
+              noise(p.x + (y+1)*37, p.z + (y+1)*17), f);
+}
+// Rounded cellular lobes break the smooth value-noise silhouettes.
+__device__ float cloudLobes(float3 p) {
+  float3 cell=v3(floorf(p.x),floorf(p.y),floorf(p.z));
+  float nearest=4;
+  for(int z=0;z<2;z++)for(int y=0;y<2;y++)for(int x=0;x<2;x++){
+    float3 c=add(cell,v3((float)x,(float)y,(float)z));
+    unsigned h=(unsigned)((int)c.x*1973+(int)c.y*7919+(int)c.z*9277);
+    float3 delta=sub(add(c,v3((random(h)-.5f)*.5f,(random(h+13u)-.5f)*.5f,(random(h+37u)-.5f)*.5f)),p);
+    nearest=fminf(nearest,dot3(delta,delta));
+  }
+  return sat(1-sqrtf(nearest));
+}
+__device__ float cloudDensity(float3 p, const float4 *weather, float time, int detail) {
+  float qfront=(p.x*weather[1].x+p.z*weather[1].y-weather[0].w)/2200;
+  float front=weather[1].z<0?0:expf(-qfront*qfront)*weather[1].w;
+  float cover = sat(weather[0].z + front*.69f);
+  float top = 1550 + front*1500;
+  float height = (p.y-360)/(top-360);
+  if(height < 0 || height > 1) return 0;
+  float envelope = smooth(0,.13f,height)*(1-smooth(.52f,1,height));
+  float3 q = v3((p.x-time*weather[1].x*3.5f)*.0011f,
+                p.y*.0017f,(p.z-time*weather[1].y*3.5f)*.0011f);
+  float shape = noise3(q)*.50f + cloudLobes(mul(q,2.1f))*.28f
+              +noise3(add(mul(q,4.07f),v3(11,5,23)))*.15f+noise3(mul(q,8.2f))*.07f;
+  float density = sat((shape-(.70f-cover*.42f))*7.0f)*envelope;
+  if(detail != 0 && density > .01f) {
+    float erosion = .65f*noise3(add(mul(q,5.4f),v3(time*.03f,0,0)))
+                  +.35f*noise3(mul(q,13.7f));
+    density = sat(density-(1-erosion)*.35f*(1-density));
+  }
+  return density*(1+front*.65f);
+}
+__device__ float cloudSun(float3 p, const float4 *weather, float time) {
+  float3 sun = v3(.08959f,.51504f,-.85247f);
+  float optical = cloudDensity(add(p,mul(sun,70)),weather,time,0)*100
+                +cloudDensity(add(p,mul(sun,230)),weather,time,0)*240
+                +cloudDensity(add(p,mul(sun,550)),weather,time,0)*440;
+  return expf(-optical*.009f);
+}
+__device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, float time) {
+  float overhead=stormAt(weather,origin.x,origin.z);
+  float3 clear=mul(sky(d),1-overhead*.60f), light=mul(v3(1.8f,1.65f,1.42f),1-overhead*.45f);
+  float elevation=fmaxf(d.y,.018f);
+  float start=fmaxf(0,(360-origin.y)/elevation), end=fminf(11000,(3100-origin.y)/elevation);
+  float step=fmaxf(0,end-start)/72, trans=1;
+  float3 radiance=v3(0,0,0);
+  float mu=dot3(d,v3(.08959f,.51504f,-.85247f));
+  float phase=.38f+.65f*powf(fmaxf(0,mu),8);
+  for(int i=0;i<72;i++) {
+    if(trans < .012f) break;
+    float t=start+((float)i+.5f)*step;
+    float3 p=add(origin,mul(d,t));
+    float density=cloudDensity(p,weather,time,1);
+    if(density>.005f) {
+      float direct=cloudSun(p,weather,time);
+      float high=sat((p.y-360)/1300);
+      float3 ambient=mix3(v3(.055f,.085f,.135f),v3(.32f,.41f,.55f),high);
+      // Cheap multiple-scattering fill prevents pitch-black cloud interiors.
+      float3 lit=add(mul(ambient,.65f+ .35f*expf(-density*2)),mul(light,phase*(direct+.10f*expf(-density))));
+      float opacity=1-expf(-density*step*.009f);
+      radiance=add(radiance,mul(lit,trans*opacity));
+      trans*=1-opacity;
+    }
+  }
+  float3 result=add(radiance,mul(clear,trans));
+  float haze=(1-expf(-start*.000065f))*.75f;
+  float3 horizon=mix3(v3(.58f,.70f,.82f),v3(.16f,.23f,.31f),overhead);
+  result=mix3(result,horizon,haze);
+  float curtain=stormAt(weather,origin.x+d.x*1300,origin.z+d.z*1300)
+                  *smooth(.30f,.025f,d.y)*(.55f+.45f*noise(d.x*35+time*.08f,d.z*35));
+  result=mix3(result,v3(.10f,.155f,.22f),curtain*.65f);
+  return mix3(clear,result,smooth(.005f,.045f,d.y));
+}
+__global__ void sky_environment(float4 *environment, const float4 *weather,
+                                 float camX,float camY,float camZ,float time) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x), y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=1024||y>=256)return;
+  float angle=((float)x+.5f)*6.283185307f/1024;
+  float elevation=square(((float)y+.5f)/256)*1.570796327f;
+  float3 d=v3(sinf(angle)*cosf(elevation),sinf(elevation),-cosf(angle)*cosf(elevation));
+  float3 col=volumeSky(d,weather,v3(camX,camY,camZ),time);
+  environment[y*1024+x]=make_float4(col.x,col.y,col.z,1);
+}
+__global__ void cloud_shadow(float4 *environment, const float4 *weather,
+                              float camX,float camZ,float time) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=128||z>=128)return;
+  float wx=floorf(camX/32)*32+((float)x-64)*32, wz=floorf(camZ/32)*32+((float)z-64)*32;
+  float optical=0;
+  for(int i=0;i<8;i++){
+    float h=400+(float)i*180;
+    optical+=cloudDensity(v3(wx+h*.17395f,h,wz-h*1.65518f),weather,time,0)*180/.51504f;
+  }
+  environment[262144+z*128+x]=make_float4(expf(-optical*.009f),0,0,0);
+}
+__device__ float3 environmentSky(const float4 *environment,float3 d) {
+  float u=atan2f(d.x,-d.z)*1024/6.283185307f-.5f;
+  float v=sqrtf(atan2f(sat(d.y),sqrtf(fmaxf(0,1-d.y*d.y)))/1.570796327f)*256-.5f;
+  int x=(int)floorf(u),y=(int)floorf(fminf(254.999f,fmaxf(0,v)));
+  float4 a=mix4(environment[y*1024+wrap(x,1024)],environment[y*1024+wrap(x+1,1024)],frac(u));
+  float4 b=mix4(environment[(y+1)*1024+wrap(x,1024)],environment[(y+1)*1024+wrap(x+1,1024)],frac(u));
+  float4 c=mix4(a,b,frac(fminf(254.999f,fmaxf(0,v))));
+  return v3(c.x,c.y,c.z);
+}
+__device__ float environmentShadow(const float4 *environment,float x,float z,float camX,float camZ){
+  float u=fminf(126.999f,fmaxf(0,(x-floorf(camX/32)*32)/32+64));
+  float v=fminf(126.999f,fmaxf(0,(z-floorf(camZ/32)*32)/32+64));
+  return sample4(environment,u,v,128,262144).x;
+}
+
 // Buoy signed-distance geometry, oriented to the sampled water normal.
 __device__ float buoyDistance(float3 p) {
   float r = sqrtf(p.x * p.x + p.z * p.z);
@@ -531,7 +648,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
                              float camZ, float camY, float yaw, float pitch,
                              float centerX, float centerZ, float depth,
                              float time, int view, const float4 *weather,
-                             const float4 *foam, int buoy) {
+                             const float4 *foam, int buoy, const float4 *environment) {
   int ix = (int)(blockIdx.x * blockDim.x + threadIdx.x),
       iy = (int)(blockIdx.y * blockDim.y + threadIdx.y);
   if (ix >= width || iy >= height)
@@ -540,11 +657,9 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
         sy = 1 - 2 * ((float)iy + .5f) / (float)height;
   float3 rd = ray(sx, sy, (float)width / (float)height, yaw, pitch),
          sun = v3(.08959f, .51504f, -.85247f), SUN = v3(6, 5.4f, 4.44f),
-         col = weatherSky(rd, weather, camX, camZ, time);
+         col = environmentSky(environment, rd);
   float visibleDistance = 100000;
-  SUN = mul(SUN, expf(-6.0f * fmaxf(stormAt(weather, camX, camZ),
-                                    cloudAt(weather, camX + sun.x * 900,
-                                            camZ + sun.z * 900))));
+  SUN = mul(SUN, environmentShadow(environment,camX,camZ,camX,camZ));
   if (rd.y < .0015f) {
     float3 wd = norm(v3(rd.x, fminf(rd.y, -.0015f), rd.z));
     float t = -camY / wd.y;
@@ -564,8 +679,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     }
     float localStorm = stormAt(weather, P.x, P.z);
     SUN = mul(v3(6, 5.4f, 4.44f),
-              expf(-6.0f * fmaxf(localStorm, cloudAt(weather, P.x + sun.x * 900,
-                                                     P.z + sun.z * 900))));
+              environmentShadow(environment,P.x,P.z,camX,camZ));
     float gust =
         (noise(P.x * .08f + time * .6f, P.z * .08f) - .5f) * localStorm * .055f;
     n = norm(add(n, v3(gust, 0, gust * .6f)));
@@ -573,7 +687,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float F = fresnel(nv);
     float3 rr = sub(wd, mul(n, 2 * dot3(wd, n)));
     rr.y = fabsf(rr.y);
-    float3 reflection = mul(weatherSky(rr, weather, P.x, P.z, time), 1.25f),
+    float3 reflection = mul(environmentSky(environment, rr), 1.25f),
            h = norm(add(v, sun));
     float nh = fmaxf(0, dot3(n, h)), nl = fmaxf(0, dot3(n, sun)),
           a2 = .00012f + 1.2f * a.w + .000025f * t, c2 = fmaxf(nh * nh, .0001f),
@@ -642,7 +756,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     col = mix3(col,
                mix3(v3(.57f, .6745f, .779f), v3(.09f, .14f, .18f), localStorm),
                haze);
-    col = mix3(col, weatherSky(rd, weather, camX, camZ, time),
+    col = mix3(col, environmentSky(environment, rd),
                smooth(-.0005f, .0015f, rd.y));
     visibleDistance = t;
     if (view == 1)
@@ -873,3 +987,4 @@ __global__ void present(const float4 *hdr, const float4 *bloom,
            bl = (unsigned)(tone(c.z) * 255 + .5f);
   image[id] = r | (g << 8) | (bl << 16) | 4278190080u;
 }
+

@@ -29,7 +29,7 @@ const diag = (window.clearwaterDiagnostics = {
   cascades: [4.6, 37, 293],
   fftSize: 256,
 });
-let weather,
+let environment, weather,
   spectralEnergy,
   foam,
   foamIndex = 0,
@@ -350,6 +350,8 @@ function setupLens() {
 function render(timestampWrites) {
   const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
+  batch.dispatch(k.sky_environment.bind({environment,weather}, {camX:state.x,camY:state.y,camZ:state.z,time:state.time}),[128,32,1]);
+  batch.dispatch(k.cloud_shadow.bind({environment,weather}, {camX:state.x,camZ:state.z,time:state.time}),[16,16,1]);
   batch
     .dispatch(k.clear_caustics.bind({ photons }), [64, 64, 1])
     .dispatch(
@@ -367,6 +369,7 @@ function render(timestampWrites) {
         hdr,
         weather,
         foam: foam[foamIndex],
+        environment,
       },
       {
         width,
@@ -761,6 +764,7 @@ try {
         : [8, 8, 1],
     });
   }
+  environment = rt.createBuffer((262144+16384)*16);
   weather = rt.createBuffer(2 * 16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
   foam = [rt.createBuffer(65536 * 16), rt.createBuffer(65536 * 16)];

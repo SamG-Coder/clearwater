@@ -41,7 +41,7 @@ struct App {
  HWND energyLabel=nullptr,depthLabel=nullptr,exposureLabel=nullptr,speedLabel=nullptr;
  HFONT font=nullptr,heading=nullptr;HBRUSH background=nullptr;
  float weatherAge=-1,weatherRate=30,wind=5,rain=0,clouds=.28f,direction=.64f,strength=1;bool buoy=false;int foamIndex=0;
- Buffer<float4> weather,foam[2];Buffer<float> spectralEnergy;
+ Buffer<float4> environment,weather,foam[2];Buffer<float> spectralEnergy;
  Camera cam;float energy=1,depth=1.6f,exposure=1.1f,time=0,cx=0,cz=0,accumulator=0;
  bool playing=true,glare=true,cruise=false,running=true,drag=false,tap=false,capture=false,resizePending=true;
  bool keys[256]={};POINT previous{},start{};float tapX=0,tapY=0;int quality=1152,view=0,width=0,height=0,ripIndex=0,frames=0;
@@ -70,7 +70,7 @@ struct App {
  }
  void transform(float4* a,float4* b,float sign){for(int axis=0;axis<2;axis++)for(int p=1;p<256;p*=2){fft_pass<<<wavesGrid,block>>>(a,b,p,axis,sign);std::swap(a,b);}}
  void initGpu(){
-  weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(65536);
+  environment.alloc(262144+16384);weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(65536);
   seed.alloc(3*65536);rows.alloc(768);scales.alloc(3);surface.alloc(3*65536);ripNormals.alloc(65536);photons.alloc(512*512*3);caustics.alloc(512*512);lensKernel.alloc(3*65536);
   for(int i=0;i<2;i++){fft[i].alloc(3*65536);rip[i].alloc(65536);lens[i].alloc(3*65536);}
   decodeAsset();seed_spectrum<<<wavesGrid,block>>>(seed.p,7);spectrum_rows<<<12,64>>>(seed.p,rows.p);spectrum_norm<<<1,64>>>(rows.p,scales.p);
@@ -101,8 +101,10 @@ struct App {
   }ripple_normals<<<ripGrid,block>>>(rip[ripIndex].p,ripNormals.p);
  }
  void draw(){
+  sky_environment<<<dim3(128,32,1),block>>>(environment.p,weather.p,cam.x,cam.y,cam.z,time);
+  cloud_shadow<<<dim3(16,16,1),block>>>(environment.p,weather.p,cam.x,cam.z,time);
   dim3 grid(width/8,height/8,1);clear_caustics<<<dim3(64,64,1),block>>>(photons.p);trace_caustics<<<dim3(128,128,1),block>>>(surface.p,photons.p,depth);filter_caustics<<<dim3(64,64,1),block>>>(photons.p,caustics.p);
-  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view,weather.p,foam[foamIndex].p,buoy?1:0);
+  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view,weather.p,foam[foamIndex].p,buoy?1:0,environment.p);
   if(glare){glare_source<<<wavesGrid,block>>>(hdr.p,lens[0].p,width,height);transform(lens[0].p,lens[1].p,-1);glare_multiply<<<wavesGrid,block>>>(lens[0].p,lensKernel.p,lens[1].p);transform(lens[1].p,lens[0].p,1);}
   bloom_pass<<<grid,block>>>(hdr.p,bloom[0].p,width,height,0);bloom_pass<<<grid,block>>>(bloom[0].p,bloom[1].p,width,height,1);present<<<grid,block>>>(hdr.p,bloom[1].p,lens[1].p,pixels.p,width,height,exposure,glare?1:0);check(cudaGetLastError());
   check(cudaGraphicsMapResources(1,&shared));cudaArray_t array;check(cudaGraphicsSubResourceGetMappedArray(&array,shared,0,0));check(cudaMemcpy2DToArray(array,0,0,pixels.p,width*4,width*4,height,cudaMemcpyDeviceToDevice));check(cudaGraphicsUnmapResources(1,&shared));ComPtr<ID3D11Texture2D> back;hr(swap->GetBuffer(0,IID_PPV_ARGS(back.GetAddressOf())));context->CopyResource(back.Get(),texture.Get());hr(swap->Present(1,0));
