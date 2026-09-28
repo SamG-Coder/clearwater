@@ -347,8 +347,8 @@ function setupLens() {
   );
   rt.device.queue.submit([enc.finish()]);
 }
-function render() {
-  const batch = rt.batch(),
+function render(timestampWrites) {
+  const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
   batch
     .dispatch(k.clear_caustics.bind({ photons }), [64, 64, 1])
@@ -533,6 +533,32 @@ async function exclusive(fn) {
 window.clearwaterLab = {
   state,
   pause: () => play(false),
+  // Explicit diagnostic only: timestamp readbacks never enter the live frame loop.
+  async benchmark(samples = 40) {
+    return exclusive(async () => {
+      play(false);
+      if (!rt.device.features.has("timestamp-query")) throw Error("GPU timestamps unavailable");
+      const querySet = rt.device.createQuerySet({type: "timestamp", count: 2});
+      const resolve = rt.device.createBuffer({size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC});
+      const read = rt.device.createBuffer({size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ});
+      const times = [];
+      try {
+        for (let i = 0; i < samples + 8; i++) {
+          render({querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1});
+          const enc = rt.device.createCommandEncoder();
+          enc.resolveQuerySet(querySet, 0, 2, resolve, 0);
+          enc.copyBufferToBuffer(resolve, 0, read, 0, 16);
+          rt.device.queue.submit([enc.finish()]);
+          await read.mapAsync(GPUMapMode.READ);
+          const t = new BigUint64Array(read.getMappedRange());
+          if (i >= 8) times.push(Number(t[1] - t[0]) / 1e6);
+          read.unmap();
+        }
+        times.sort((a,b) => a-b);
+        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: "caustics, sky, water, glare and post; excludes wave simulation and presentation"};
+      } finally {querySet.destroy(); resolve.destroy(); read.destroy();}
+    });
+  },
   async weatherInspect() {
     return exclusive(async () => ({
       weather: Array.from(await rt.read(weather)),
