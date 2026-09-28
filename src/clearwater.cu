@@ -69,33 +69,6 @@ __device__ float fbm(float x, float z) {
          .12f * noise(x * 4.12f, z * 4.12f) +
          .05f * noise(x * 8.36f, z * 8.36f);
 }
-// Triangular gradient noise avoids the rectangular plateaus of value noise.
-__device__ float foamCorner(float ix,float iz,float x,float z){
- float w=fmaxf(0,.5f-x*x-z*z);
- unsigned h=hashU((unsigned)((int)ix*1973+(int)iz*9277+89173));
- float u=(h&1u)!=0u?x:-x,v=(h&2u)!=0u?z:-z;
- float g=(h&4u)!=0u?u+v:(((h&8u)!=0u)?u:v);
- return w*w*w*w*g;
-}
-__device__ float foamNoise(float x,float z){
- float skew=(x+z)*.366025404f,ix=floorf(x+skew),iz=floorf(z+skew);
- float unskew=(ix+iz)*.211324865f,px=x-ix+unskew,pz=z-iz+unskew;
- float ox=px>pz?1.0f:0.0f,oz=1-ox;
- float n=foamCorner(ix,iz,px,pz)+foamCorner(ix+ox,iz+oz,px-ox+.211324865f,pz-oz+.211324865f)
-        +foamCorner(ix+1,iz+1,px-.577350269f,pz-.577350269f);
- return sat(.5f+n*35);
-}
-// Connected bubble films around irregular cells; no thresholded noise dots.
-__device__ float foamFilms(float x,float z,float thickness){
- float ix=floorf(x),iz=floorf(z),u=frac(x),v=frac(z),nearest=9;
- for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
-  float px=i+.1f+.8f*hash(ix+i,iz+j)-u;
-  float pz=j+.1f+.8f*hash(ix+i+193,iz+j-71)-v;
-  float radius=(.17f+.39f*hash(ix+i-57,iz+j+313))*(1.35f-thickness);
-  nearest=fminf(nearest,(px*px+pz*pz)/(radius*radius));
- }
- return smooth(.72f,1.15f,nearest);
-}
 __device__ int wrap(int x, int n) { return (x % n + n) % n; }
 __device__ float lengthL(int c) {
   return c == 0 ? 4.6f : (c == 1 ? 37.0f : 293.0f);
@@ -154,25 +127,6 @@ __device__ float windDensity(float k, float projection, float wind) {
   float ratio = peak / fmaxf(omega, .0001f);
   return expf(-1.25f * ratio * ratio * ratio * ratio) * peakBoost *
          (.12f + .88f * projection * projection) / (k * k * k * k + .000001f);
-}
-__global__ void foam_step(const float4 *surface, const float4 *previous,
-                          float4 *next, const float4 *weather, float dt) {
-  int x = (int)(blockIdx.x * blockDim.x + threadIdx.x),
-      z = (int)(blockIdx.y * blockDim.y + threadIdx.y);
-  if (x >= 256 || z >= 256)
-    return;
-  float4 w = weather[0], d = weather[1];
-  float4 a = surface[65536 + z * 256 + x];
-  float4 detail =
-      sample4(surface, (float)x * 37 / 4.6f, (float)z * 37 / 4.6f, 256, 0);
-  float steep = sqrtf((a.y + detail.y) * (a.y + detail.y) +
-                      (a.z + detail.z) * (a.z + detail.z));
-  float production =
-      smooth(.22f, .48f, steep) * smooth(.07f, .30f, a.x) * smooth(7, 20, w.x);
-  float4 old = sample4(previous, (float)x - d.x * w.x * .035f * dt * 256 / 37,
-                       (float)z - d.y * w.x * .035f * dt * 256 / 37, 256, 0);
-  next[z * 256 + x] = make_float4(
-      sat(old.x * expf(-dt * .18f) + production * dt * .65f), 0, 0, 0);
 }
 // Three independent narrow-band spectra: capillary detail, wind waves and
 // swell. A GPU reduction normalizes each cascade by expected RMS slope (as
@@ -273,7 +227,12 @@ __global__ void evolve_spectrum(const float2 *seed, const float *scales,
     kx = 0;
   if (z == 128)
     kz = 0;
-  output[id] = make_float4((1 - kx) * re, (1 - kx) * im, -kz * im, kz * re);
+  // Pack dH/dz + i*dDx/dz in the second complex channel. The cross
+  // derivative is real after IFFT; displacement uses +i*k/|k| in this convention.
+  float chop=(c==0?.18f:(c==1?1.15f:.75f))/fmaxf(1,sea);
+  float cross=-kx*kz*rsqrtf(fmaxf(kx*kx+kz*kz,.00000001f))*chop;
+  output[id] = make_float4((1 - kx) * re, (1 - kx) * im,
+                          -kz*im-cross*im, kz*re+cross*re);
 }
 // Stockham autosort IFFT, two complex fields packed in float4, no CPU FFT.
 // The unnormalized inverse matches the slope-normalized Fourier coefficients.
@@ -301,7 +260,7 @@ __global__ void resolve_surface(const float4 *input, float4 *surface) {
     return;
   int id = c * 65536 + z * 256 + x;
   float4 s = input[id];
-  surface[id] = make_float4(s.x, s.y, s.z, s.y * s.y + s.z * s.z);
+  surface[id] = s; // height, slopes, symmetric cross displacement derivative
 }
 // Recover Hermitian height from packed H+i*dH/dx and pack horizontal displacement.
 __global__ void chop_spectrum(const float4 *input,float4 *output,float sea){
@@ -313,7 +272,10 @@ __global__ void chop_spectrum(const float4 *input,float4 *output,float sea){
  float kx=(float)(x<128?x:x-256),kz=(float)(z<128?z:z-256);
  if(x==128)kx=0;if(z==128)kz=0;
  float inv=rsqrtf(fmaxf(kx*kx+kz*kz,.00001f))*(c==0?.18f:(c==1?1.15f:.75f))/fmaxf(1,sea);
- output[id]=make_float4((-kx*im-kz*re)*inv,(kx*re-kz*im)*inv,0,0);
+ // Dx+i*Dz and dDx/dx+i*dDz/dz: four real fields in two complex channels.
+ float xx=-kx*kx*inv*6.283185307f/lengthL(c),zz=-kz*kz*inv*6.283185307f/lengthL(c);
+ output[id]=make_float4((-kx*im-kz*re)*inv,(kx*re-kz*im)*inv,
+                       xx*re-zz*im,xx*im+zz*re);
 }
 // Resample the displaced parametric surface onto the ray solver's world grid.
 // Limit inverse-map excursions and slope amplification before folding occurs.
@@ -327,10 +289,11 @@ __global__ void chop_surface(const float4 *input,const float4 *displacement,floa
    qx=(float)x-fminf(6,fmaxf(-6,d.x*scale));qz=(float)z-fminf(6,fmaxf(-6,d.y*scale));
  }
  float4 h=sample4(input,qx,qz,256,offset);
- float4 xp=sample4(displacement,qx+1,qz,256,offset),xm=sample4(displacement,qx-1,qz,256,offset);
- float4 zp=sample4(displacement,qx,qz+1,256,offset),zm=sample4(displacement,qx,qz-1,256,offset);
- float xx=1+(xp.x-xm.x)*scale*.5f,xz=(zp.x-zm.x)*scale*.5f;
- float zx=(xp.y-xm.y)*scale*.5f,zz=1+(zp.y-zm.y)*scale*.5f;
+ float4 d=sample4(displacement,qx,qz,256,offset);
+ float xx=1+d.z,xz=h.w,zx=h.w,zz=1+d.w;
+ // Keep the slope second moment in the original plane for specular filtering.
+ // Extra planes hold the world-mapped spectral deformation and determinant.
+ surface[id+196608]=make_float4(xx,xz,zz,xx*zz-xz*zx);
  float inv=1/fmaxf(.45f,xx*zz-xz*zx);
  float nx=fminf(1.8f,fmaxf(-1.8f,(zz*h.y-zx*h.z)*inv));
  float nz=fminf(1.8f,fmaxf(-1.8f,(xx*h.z-xz*h.y)*inv));
@@ -339,39 +302,70 @@ __global__ void chop_surface(const float4 *input,const float4 *displacement,floa
 __global__ void ocean_foam(const float4 *surface,const float4 *displacement,const float4 *previous,
                             float4 *next,const float4 *weather,float dt){
  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
- if(x>=256||z>=256)return;
- int id=z*256+x;
- float4 a=surface[65536+id];
+ if(x>=512||z>=512)return;
+ int id=z*512+x;
+ float gridX=x*.5f,gridZ=z*.5f;
+ float4 a=sample4(surface,gridX,gridZ,256,65536);
  // Match the inverse displacement map used by chop_surface; evaluating the
  // Jacobian on the original grid places whitecaps beside the rendered crest.
- float sx=x,sz=z;
+ float sx=gridX,sz=gridZ;
  for(int i=0;i<3;i++){
   float4 d=sample4(displacement,sx,sz,256,65536);
-  sx=x-fminf(6,fmaxf(-6,d.x*256/37));sz=z-fminf(6,fmaxf(-6,d.y*256/37));
+  sx=gridX-fminf(6,fmaxf(-6,d.x*256/37));sz=gridZ-fminf(6,fmaxf(-6,d.y*256/37));
  }
- float4 xp=sample4(displacement,sx+1,sz,256,65536),xm=sample4(displacement,sx-1,sz,256,65536);
- float4 zp=sample4(displacement,sx,sz+1,256,65536),zm=sample4(displacement,sx,sz-1,256,65536);
- float xx=1+(xp.x-xm.x)*128/37,zz=1+(zp.y-zm.y)*128/37;
- float jac=xx*zz-(zp.x-zm.x)*(xp.y-xm.y)*square(128.0f/37);
- // Spawn on compressed positive crests, not the broad shoulders of every wave.
- float breaking=smooth(.80f,.50f,jac)*smooth(.035f,.16f,a.x)*smooth(7,17,weather[0].x);
- // The second plane stores displacement history and advected material offsets.
+ float4 deformation=sample4(surface,gridX,gridZ,256,262144);
+ float jac=deformation.w;
+ float fx=gridX*37.0f/4.6f,fz=gridZ*37.0f/4.6f;
+ float4 fineDeformation=sample4(surface,fx,fz,256,196608);
+ float smallJac=fineDeformation.w;
+ // Combine deformation tensors before taking the determinant: crossing wave
+ // bands compress and stretch each other rather than multiplying foam masks.
+ jac=(deformation.x+fineDeformation.x-1)*(deformation.z+fineDeformation.z-1)
+     -square(deformation.y+fineDeformation.y);
+ float4 detail=sample4(surface,fx,fz,256,0);
+ float steep=sqrtf(square(a.y+detail.y)+square(a.z+detail.z));
+ // Compression and slope, never absolute height, identify active breakers.
+ float breaking=smooth(.80f,.50f,jac)*smooth(.08f,.22f,steep);
+ // The second plane stores FFT displacement history and surface velocity.
  // Use surface motion, not a global scrolling texture, to stretch old trails.
- float4 disp=sample4(displacement,sx,sz,256,65536),history=previous[65536+id];
+ float4 disp=sample4(displacement,sx,sz,256,65536),history=previous[262144+id];
  float invDt=dt>0?1/fmaxf(dt,.001f):0;
  float vx=fminf(2,fmaxf(-2,(disp.x-history.x)*invDt))+weather[1].x*weather[0].x*.016f;
  float vz=fminf(2,fmaxf(-2,(disp.y-history.y)*invDt))+weather[1].y*weather[0].x*.016f;
- float qx=x-vx*dt*256/37,qz=z-vz*dt*256/37;
- float4 old=sample4(previous,qx,qz,256,0);
- float4 material=sample4(previous,qx,qz,256,65536);
+ float qx=x-vx*dt*512/37,qz=z-vz*dt*512/37;
+ float4 old=sample4(previous,qx,qz,512,0);
+ // Limited second-order correction to semi-Lagrangian transport. Plain
+ // bilinear backtracing numerically smears a crest into a soft white blob.
+ // Undo its leading diffusion term while clamping to neighbour extrema.
+ float4 axp=sample4(previous,qx+1,qz,512,0),axm=sample4(previous,qx-1,qz,512,0);
+ float4 azp=sample4(previous,qx,qz+1,512,0),azm=sample4(previous,qx,qz-1,512,0);
+ float tx=frac(qx),tz=frac(qz),wx=tx*(1-tx)*.5f,wz=tz*(1-tz)*.5f;
+ float low=fminf(old.x,fminf(fminf(axp.x,axm.x),fminf(azp.x,azm.x)));
+ float high=fmaxf(old.x,fmaxf(fmaxf(axp.x,axm.x),fmaxf(azp.x,azm.x)));
+ old.x=fminf(high,fmaxf(low,old.x-wx*(axp.x+axm.x-2*old.x)-wz*(azp.x+azm.x-2*old.x)));
+ // Local area change from the FFT deformation stretches/dilutes or gathers
+ // the transported concentration. Clamp strain across seeks and large steps.
+ float strain=old.z>.2f?logf(fmaxf(.2f,jac)/old.z)*invDt:0;
+ strain=fminf(2,fmaxf(-2,strain));
+ float compression=expf(-strain*dt);
+ float thinLoss=.25f+(.60f+fmaxf(0,smallJac-1)*5)*(1-smooth(.015f,.12f,old.x));
+ // Two diffuse bubble reservoirs below the interface. Mixing broadens their
+ // footprint; deep bubbles rise into the shallow layer before feeding froth.
+ float4 plume=sample4(previous,qx,qz,512,524288);
+ float4 pa=sample4(previous,qx+1,qz,512,524288),pb=sample4(previous,qx-1,qz,512,524288);
+ float4 pc=sample4(previous,qx,qz+1,512,524288),pd=sample4(previous,qx,qz-1,512,524288);
+ float mixing=1-expf(-dt*4);
+ float deep=sat(lerp(plume.y,(pa.y+pb.y+pc.y+pd.y)*.25f,mixing)*expf(-dt*.38f)+breaking*dt*2.3f);
+ float shallow=sat(lerp(plume.x,(pa.x+pb.x+pc.x+pd.x)*.25f,mixing)*expf(-dt*.85f)+breaking*dt*3.2f+plume.y*dt*.32f);
  float deposited=1-expf(-breaking*dt*3.5f);
- float cover=sat(old.x*expf(-dt*.30f)+(1-old.x)*deposited);
+ float cover=sat(old.x*compression*expf(-dt*thinLoss)+(1-old.x)*(deposited+plume.x*dt*.12f));
  float fresh=sat(old.y*expf(-dt*2.5f)+(1-old.y)*deposited*1.7f);
  // Density-weighted age: a new breaker renews the patch rather than making
  // unrelated bits of noise appear. Old patches thin and open up over time.
  float age=cover>.0001f?(old.w+dt)*(1-sat(deposited/fmaxf(cover,.001f))):0;
  next[id]=make_float4(cover,fresh,jac,fminf(age,30));
- next[65536+id]=make_float4(disp.x,disp.y,material.z+vx*dt,material.w+vz*dt);
+ next[262144+id]=make_float4(disp.x,disp.y,vx,vz);
+ next[524288+id]=make_float4(shallow,deep,0,0);
 }
 
 __device__ float3 ray(float sx, float sy, float aspect, float yaw,
@@ -956,10 +950,25 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
                  sub(v3(1, 1, 1), Tv)),
             3.2f);
     float3 under = add(prod(Lfloor, Tv), Lin);
+    // Three refracted depth samples through a bounded bubble layer, rather
+    // than a blurred white decal on top of the water. The lower reservoir
+    // stays visible through gaps in surface foam and responds to view angle.
+    float bubbleOptical=0;
+    for(int layer=0;layer<3;layer++){
+      float below=layer==0?.08f:(layer==1?.30f:.68f);
+      float travel=below/fmaxf(.25f,-tr.y);
+      float bx=P.x+tr.x*travel,bz=P.z+tr.z*travel;
+      float4 bubble=sample4(foam,bx*512/37,bz*512/37,512,524288);
+      float density=layer==0?bubble.x:(layer==1?(bubble.x+bubble.y)*.5f:bubble.y);
+      bubbleOptical+=density*(layer==0?2.4f:(layer==1?2.0f:1.3f))*expf(-below*.8f);
+    }
+    float bubbleOpacity=1-expf(-bubbleOptical/fmaxf(.35f,-tr.y));
+    float3 bubbleLight=mul(v3(.34f,.53f,.51f),(.72f+.28f*nl)*(1-.42f*localStorm));
+    under=mix3(under,bubbleLight,bubbleOpacity);
     col = add(add(mul(reflection, F), mul(under, 1 - F)), spec);
-    // Cubic B-spline reconstruction using four bilinear taps. The 14 cm
+    // Cubic B-spline reconstruction using four bilinear taps. The 7 cm
     // simulation cells must not appear as rectangles in close surface views.
-    float gx=P.x*256/37,gz=P.z*256/37;
+    float gx=P.x*512/37,gz=P.z*512/37;
     float ux=frac(gx),uz=frac(gz);
     float ax=square(1-ux)*(1-ux)/6,az=square(1-uz)*(1-uz)/6;
     float dx=ux*ux*ux/6,dz=uz*uz*uz/6;
@@ -967,28 +976,35 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float cx=1-ax-bx-dx,cz=1-az-bz-dz;
     float lx=floorf(gx)-1+bx/(ax+bx),lz=floorf(gz)-1+bz/(az+bz);
     float hx=floorf(gx)+1+dx/(cx+dx),hz=floorf(gz)+1+dz/(cz+dz);
-    float4 foamValue=mix4(mix4(sample4(foam,lx,lz,256,0),sample4(foam,hx,lz,256,0),cx+dx),
-                          mix4(sample4(foam,lx,hz,256,0),sample4(foam,hx,hz,256,0),cx+dx),cz+dz);
+    float4 foamValue=mix4(mix4(sample4(foam,lx,lz,512,0),sample4(foam,hx,lz,512,0),cx+dx),
+                          mix4(sample4(foam,lx,hz,512,0),sample4(foam,hx,hz,512,0),cx+dx),cz+dz);
     if(foamValue.x>.003f||foamValue.y>.003f){
-      float4 material=sample4(foam,gx,gz,256,65536);
-      float fx=P.x-material.z,fz=P.z-material.w;
-      float fu=fx*.8f+fz*.6f,fv=fz*.8f-fx*.6f;
-      float pixel=t*1.25f/height/fmaxf(.18f,nv);
+      // Optical thickness comes only from transported concentration and age.
+      // No noise, cellular mask or world-space pattern defines the foam edge.
       float young=smooth(.015f,.20f,foamValue.y);
-      float age=smooth(.3f,4,foamValue.w);
-      // Open connected holes in a continuous film. Microbubbles modulate its
-      // light, never punch the entire patch into uniform detached speckles.
-      float folds=foamNoise(fu*1.7f,fv*1.7f);
-      float thickness=lerp(.26f,.06f,age);
-      float films=foamFilms(fu*32+folds*1.8f,fv*32-folds*1.8f,thickness);
-      films=lerp(films,lerp(.64f,.38f,age),smooth(.003f,.025f,pixel));
-      float thinning=lerp(1,smooth(.16f,.70f,folds),age*.8f);
-      float residue=smooth(.008f,.36f,foamValue.x)*thinning*(.12f+.88f*films);
-      float film=lerp(residue,1,young);
-      float opacity=1-expf(-film*(1.25f+young*1.8f));
-      float bubbles=lerp(foamNoise(fu*48,fv*48),.5f,smooth(.004f,.025f,pixel));
-      float3 foamLight=mul(v3(.79f,.83f,.82f),(.76f+.24f*nl)*(1-.40f*localStorm));
-      foamLight=mul(foamLight,.88f+.12f*bubbles);
+      float age=smooth(.3f,6,foamValue.w);
+      float concentration=fmaxf(0,foamValue.x-.004f);
+      // Short-wave area change comes from the same spectral displacement
+      // derivatives as the breaking test, not a curvature or noise surrogate.
+      float area=fminf(4,fmaxf(.18f,sample4(surface,P.x*256/4.6f,P.z*256/4.6f,256,196608).w));
+      float footprint=t*1.25f/height/fmaxf(.18f,nv);
+      area=lerp(area,1,smooth(.012f,.08f,footprint));
+      concentration/=area;
+      // Aged films rupture under short-wave tensile deformation. This uses
+      // the wave-area field; it does not introduce an independent bubble mask.
+      float stretch=fmaxf(0,area-1);
+      concentration*=expf(-stretch*(18+age*60));
+      float coverage=smooth(.025f,.045f,concentration);
+      float optical=coverage*(1.4f+young*2.5f)*(1-age*.30f);
+      float opacity=1-expf(-optical);
+      // A centimetre-scale froth mound changes diffuse lighting at patch
+      // edges. This is an optical relief approximation, not extra geometry.
+      float fxp=sample4(foam,gx+1,gz,512,0).x,fxm=sample4(foam,gx-1,gz,512,0).x;
+      float fzp=sample4(foam,gx,gz+1,512,0).x,fzm=sample4(foam,gx,gz-1,512,0).x;
+      float3 foamNormal=norm(add(n,v3(-(fxp-fxm)*.32f,0,-(fzp-fzm)*.32f)));
+      float relief=fmaxf(0,dot3(foamNormal,sun));
+      float3 foamLight=mul(v3(.86f,.88f,.85f),(.60f+.40f*relief)*(1-.40f*localStorm));
+      foamLight=mul(foamLight,.90f+.10f*young);
       col=mix3(col,foamLight,opacity);
     }
     col=add(col,mul(v3(.46f,.59f,.64f),impact.z));
@@ -1001,8 +1017,8 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
         float4 sw=water(surface,rip,sp.x,sp.z,centerX,centerZ,st);
         float altitude=sp.y-sw.x;
         if(altitude>.015f&&altitude<.65f){
-          float4 sf=sample4(foam,(sp.x-weather[1].x*altitude)*256/37,(sp.z-weather[1].y*altitude)*256/37,256,0);
-          spray+=sf.y*expf(-altitude*7)*noise(sp.x*7-time*2,sp.z*7)*.16f;
+          float4 sf=sample4(foam,(sp.x-weather[1].x*altitude)*512/37,(sp.z-weather[1].y*altitude)*512/37,512,0);
+          spray+=sf.y*expf(-altitude*7)*.08f;
         }
       }
       col=mix3(col,v3(.46f,.55f,.61f),sat(spray));

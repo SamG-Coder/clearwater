@@ -266,7 +266,7 @@ function waves(batch) {
       },
       { dt: frameDt },
     ),
-    RG,
+    [64,64,1],
   );
   foamIndex = 1 - foamIndex;
 }
@@ -581,10 +581,8 @@ window.clearwaterLab = {
         }),
         { min: Infinity, max: -Infinity, finite: true },
       ),
-      compressionMin: (await rt.read(foam[foamIndex])).slice(0,65536*4).reduce((a,v,i)=>i%4===2?Math.min(a,v):a,Infinity),
-      foamPeak: Math.max(
-        ...(await rt.read(foam[foamIndex])).slice(0,65536*4).filter((_, i) => i % 4 === 0),
-      ),
+      compressionMin: (await rt.read(foam[foamIndex])).slice(0,262144*4).reduce((a,v,i)=>i%4===2?Math.min(a,v):a,Infinity),
+      foamPeak: (await rt.read(foam[foamIndex])).slice(0,262144*4).reduce((a,v,i)=>i%4===0?Math.max(a,v):a,0),
     }));
   },
   async weatherAdvance(seconds) {
@@ -609,7 +607,7 @@ window.clearwaterLab = {
   resume: () => play(true),
   async inspect() {
     return exclusive(async () => {
-      const a = await rt.read(surface),
+      const a = (await rt.read(surface)).slice(0,3*65536*4),
         r = await rt.read(rip[ripIndex]);
       const bandSquares = [0, 0, 0];
       let min = Infinity,
@@ -791,14 +789,14 @@ try {
   linearSurface=rt.createBuffer(3*65536*16);
   weather = rt.createBuffer(2 * 16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
-  foam = [rt.createBuffer(2 * 65536 * 16), rt.createBuffer(2 * 65536 * 16)];
+  foam = [rt.createBuffer(3 * 262144 * 16), rt.createBuffer(3 * 262144 * 16)];
   lensKernel = rt.createBuffer(3 * 65536 * 16);
   lensFFT = [rt.createBuffer(3 * 65536 * 16), rt.createBuffer(3 * 65536 * 16)];
   seed = rt.createBuffer(3 * 65536 * 8);
   rows = rt.createBuffer(768 * 4);
   scales = rt.createBuffer(3 * 4);
   fft = [rt.createBuffer(3 * 65536 * 16), rt.createBuffer(3 * 65536 * 16)];
-  surface = rt.createBuffer(3 * 65536 * 16);
+  surface = rt.createBuffer(6 * 65536 * 16);
   rip = [rt.createBuffer(65536 * 16), rt.createBuffer(65536 * 16)];
   ripNormals = rt.createBuffer(65536 * 16);
   photons = rt.createBuffer(512 * 512 * 3 * 4);
