@@ -1,0 +1,231 @@
+{
+  "tag": "whitecaps",
+  "scenes": {
+    "calm": {
+      "width": 1152,
+      "height": 720,
+      "samples": 40,
+      "renderGpuMedianMs": 1.955488,
+      "renderGpuP95Ms": 2.299232,
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "blackwell",
+        "device": "",
+        "description": "",
+        "features": [
+          "core-features-and-limits",
+          "subgroup-size-control",
+          "shader-f16",
+          "float32-filterable",
+          "subgroups",
+          "timestamp-query"
+        ],
+        "timestampQuery": true,
+        "limits": {
+          "maxComputeInvocationsPerWorkgroup": 1024,
+          "maxComputeWorkgroupStorageSize": 16384,
+          "maxStorageBufferBindingSize": 268435456
+        }
+      },
+      "scope": "caustics, sky, water, glare and post; excludes wave simulation and presentation",
+      "fullFrame": {
+        "width": 1152,
+        "height": 720,
+        "samples": 40,
+        "renderGpuMedianMs": 2.112992,
+        "renderGpuP95Ms": 3.531072,
+        "adapter": {
+          "vendor": "nvidia",
+          "architecture": "blackwell",
+          "device": "",
+          "description": "",
+          "features": [
+            "core-features-and-limits",
+            "subgroup-size-control",
+            "shader-f16",
+            "float32-filterable",
+            "subgroups",
+            "timestamp-query"
+          ],
+          "timestampQuery": true,
+          "limits": {
+            "maxComputeInvocationsPerWorkgroup": 1024,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxStorageBufferBindingSize": 268435456
+          }
+        },
+        "scope": "complete GPU compute frame including two ripple substeps; excludes presentation"
+      }
+    },
+    "front": {
+      "width": 1152,
+      "height": 720,
+      "samples": 40,
+      "renderGpuMedianMs": 2.087584,
+      "renderGpuP95Ms": 3.700384,
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "blackwell",
+        "device": "",
+        "description": "",
+        "features": [
+          "core-features-and-limits",
+          "subgroup-size-control",
+          "shader-f16",
+          "float32-filterable",
+          "subgroups",
+          "timestamp-query"
+        ],
+        "timestampQuery": true,
+        "limits": {
+          "maxComputeInvocationsPerWorkgroup": 1024,
+          "maxComputeWorkgroupStorageSize": 16384,
+          "maxStorageBufferBindingSize": 268435456
+        }
+      },
+      "scope": "caustics, sky, water, glare and post; excludes wave simulation and presentation",
+      "fullFrame": {
+        "width": 1152,
+        "height": 720,
+        "samples": 40,
+        "renderGpuMedianMs": 2.215296,
+        "renderGpuP95Ms": 3.654368,
+        "adapter": {
+          "vendor": "nvidia",
+          "architecture": "blackwell",
+          "device": "",
+          "description": "",
+          "features": [
+            "core-features-and-limits",
+            "subgroup-size-control",
+            "shader-f16",
+            "float32-filterable",
+            "subgroups",
+            "timestamp-query"
+          ],
+          "timestampQuery": true,
+          "limits": {
+            "maxComputeInvocationsPerWorkgroup": 1024,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxStorageBufferBindingSize": 268435456
+          }
+        },
+        "scope": "complete GPU compute frame including two ripple substeps; excludes presentation"
+      }
+    },
+    "storm": {
+      "width": 1152,
+      "height": 720,
+      "samples": 40,
+      "renderGpuMedianMs": 1.969696,
+      "renderGpuP95Ms": 2.694336,
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "blackwell",
+        "device": "",
+        "description": "",
+        "features": [
+          "core-features-and-limits",
+          "subgroup-size-control",
+          "shader-f16",
+          "float32-filterable",
+          "subgroups",
+          "timestamp-query"
+        ],
+        "timestampQuery": true,
+        "limits": {
+          "maxComputeInvocationsPerWorkgroup": 1024,
+          "maxComputeWorkgroupStorageSize": 16384,
+          "maxStorageBufferBindingSize": 268435456
+        }
+      },
+      "scope": "caustics, sky, water, glare and post; excludes wave simulation and presentation",
+      "fullFrame": {
+        "width": 1152,
+        "height": 720,
+        "samples": 40,
+        "renderGpuMedianMs": 2.115808,
+        "renderGpuP95Ms": 3.552576,
+        "adapter": {
+          "vendor": "nvidia",
+          "architecture": "blackwell",
+          "device": "",
+          "description": "",
+          "features": [
+            "core-features-and-limits",
+            "subgroup-size-control",
+            "shader-f16",
+            "float32-filterable",
+            "subgroups",
+            "timestamp-query"
+          ],
+          "timestampQuery": true,
+          "limits": {
+            "maxComputeInvocationsPerWorkgroup": 1024,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxStorageBufferBindingSize": 268435456
+          }
+        },
+        "scope": "complete GPU compute frame including two ripple substeps; excludes presentation"
+      }
+    }
+  },
+  "optics": {
+    "causticMean": [
+      0.9922334551811218,
+      0.9922298640012741,
+      0.9922290071845055
+    ],
+    "hdrFinite": true,
+    "glareFinite": true,
+    "psfEnergy": [
+      1.0000001192092896,
+      1.000000238418579,
+      0.9999998807907104
+    ]
+  },
+  "water": {
+    "finite": true,
+    "min": -1.1254358291625977,
+    "max": 1.1116400957107544,
+    "rms": 0.25536027783412607,
+    "bandRms": [
+      0.02018863133560766,
+      0.20032847240529295,
+      0.39381154984982303
+    ],
+    "ripplePeak": 0.0072816722095012665,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "errors": [],
+    "stats": {
+      "pipelineCompiles": 27,
+      "pipelineCacheHits": 0,
+      "bindGroupsCreated": 60556,
+      "submissions": 1276,
+      "dispatches": 60556,
+      "uniformBytesUploaded": 13870976,
+      "dataBytesUploaded": 17563648,
+      "readbackBytes": 27951104
+    }
+  },
+  "errors": []
+}

@@ -21,6 +21,7 @@ try {
   if(scene==='storm') await page.evaluate(()=>clearwaterLab.weatherAdvance(450));
   await page.screenshot({path:`previews/quality/${tag}-${scene}.png`});
   result.scenes[scene]=await page.evaluate(()=>clearwaterLab.benchmark());
+  result.scenes[scene].fullFrame=await page.evaluate(()=>clearwaterLab.benchmark(40,true));
  }
  result.optics=await page.evaluate(()=>clearwaterLab.inspectOptics());
  result.water=await page.evaluate(()=>clearwaterLab.inspect());

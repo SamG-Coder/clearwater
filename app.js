@@ -29,7 +29,7 @@ const diag = (window.clearwaterDiagnostics = {
   cascades: [4.6, 37, 293],
   fftSize: 256,
 });
-let environment, weather,
+let chopFFT, linearSurface, environment, weather,
   spectralEnergy,
   foam,
   foamIndex = 0,
@@ -237,6 +237,8 @@ function waves(batch) {
     ),
     WG,
   );
+  batch.dispatch(k.chop_spectrum.bind({input:fft[0],output:chopFFT[0]}),WG);
+  transform(batch,chopFFT,1);
   let src = 0;
   for (let axis = 0; axis < 2; axis++)
     for (let p = 1; p < 256; p *= 2) {
@@ -249,11 +251,13 @@ function waves(batch) {
       );
       src = 1 - src;
     }
-  batch.dispatch(k.resolve_surface.bind({ input: fft[src], surface }), WG);
+  batch.dispatch(k.resolve_surface.bind({ input: fft[src], surface:linearSurface }), WG);
+  batch.dispatch(k.chop_surface.bind({input:linearSurface,displacement:chopFFT[0],surface}),WG);
   batch.dispatch(
-    k.foam_step.bind(
+    k.ocean_foam.bind(
       {
         surface,
+        displacement:chopFFT[0],
         previous: foam[foamIndex],
         next: foam[1 - foamIndex],
         weather,
@@ -347,9 +351,10 @@ function setupLens() {
   );
   rt.device.queue.submit([enc.finish()]);
 }
-function render(timestampWrites) {
+function render(timestampWrites, simulate = false) {
   const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
+  if (simulate) { waves(batch); ripples(batch, 1/60); }
   batch.dispatch(k.sky_environment.bind({environment,weather}, {camX:state.x,camY:state.y,camZ:state.z,time:state.time}),[128,32,1]);
   batch.dispatch(k.cloud_shadow.bind({environment,weather}, {camX:state.x,camZ:state.z,time:state.time}),[16,16,1]);
   batch
@@ -537,7 +542,7 @@ window.clearwaterLab = {
   state,
   pause: () => play(false),
   // Explicit diagnostic only: timestamp readbacks never enter the live frame loop.
-  async benchmark(samples = 40) {
+  async benchmark(samples = 40, simulate = false) {
     return exclusive(async () => {
       play(false);
       if (!rt.device.features.has("timestamp-query")) throw Error("GPU timestamps unavailable");
@@ -547,7 +552,7 @@ window.clearwaterLab = {
       const times = [];
       try {
         for (let i = 0; i < samples + 8; i++) {
-          render({querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1});
+          render({querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1}, simulate);
           const enc = rt.device.createCommandEncoder();
           enc.resolveQuerySet(querySet, 0, 2, resolve, 0);
           enc.copyBufferToBuffer(resolve, 0, read, 0, 16);
@@ -558,7 +563,7 @@ window.clearwaterLab = {
           read.unmap();
         }
         times.sort((a,b) => a-b);
-        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: "caustics, sky, water, glare and post; excludes wave simulation and presentation"};
+        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: simulate ? "complete GPU compute frame including two ripple substeps; excludes presentation" : "caustics, sky, water, glare and post; excludes wave simulation and presentation"};
       } finally {querySet.destroy(); resolve.destroy(); read.destroy();}
     });
   },
@@ -764,6 +769,8 @@ try {
         : [8, 8, 1],
     });
   }
+  chopFFT=[rt.createBuffer(3*65536*16),rt.createBuffer(3*65536*16)];
+  linearSurface=rt.createBuffer(3*65536*16);
   environment = rt.createBuffer((262144+16384)*16);
   weather = rt.createBuffer(2 * 16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));

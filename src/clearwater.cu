@@ -91,7 +91,8 @@ __device__ float stormAt(const float4 *weather, float x, float z) {
   if (b.z < 0)
     return 0;
   float q = (x * b.x + z * b.y - a.w) / 650.0f;
-  return expf(-q * q) * b.w;
+  float cells=.78f+.22f*noise(x*.0015f+b.z*.0007f,z*.0015f);
+  return expf(-q * q) * b.w*cells;
 }
 __device__ float cloudAt(const float4 *weather, float x, float z) {
   float cloud = weather[0].z;
@@ -275,6 +276,59 @@ __global__ void resolve_surface(const float4 *input, float4 *surface) {
   float4 s = input[id];
   surface[id] = make_float4(s.x, s.y, s.z, s.y * s.y + s.z * s.z);
 }
+// Recover Hermitian height from packed H+i*dH/dx and pack horizontal displacement.
+__global__ void chop_spectrum(const float4 *input,float4 *output){
+ int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y),c=(int)blockIdx.z;
+ if(x>=256||z>=256)return;
+ int id=c*65536+z*256+x,op=c*65536+wrap(-z,256)*256+wrap(-x,256);
+ float4 a=input[id],b=input[op];
+ float re=(a.x+b.x)*.5f,im=(a.y-b.y)*.5f;
+ float kx=(float)(x<128?x:x-256),kz=(float)(z<128?z:z-256);
+ if(x==128)kx=0;if(z==128)kz=0;
+ float inv=rsqrtf(fmaxf(kx*kx+kz*kz,.00001f))*(c==0?.18f:(c==1?1.15f:.75f));
+ output[id]=make_float4((-kx*im-kz*re)*inv,(kx*re-kz*im)*inv,0,0);
+}
+// Resample the displaced parametric surface onto the ray solver's world grid.
+// Limit inverse-map excursions and slope amplification before folding occurs.
+__global__ void chop_surface(const float4 *input,const float4 *displacement,float4 *surface){
+ int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y),c=(int)blockIdx.z;
+ if(x>=256||z>=256)return;
+ int offset=c*65536,id=offset+z*256+x;
+ float scale=256/lengthL(c),qx=(float)x,qz=(float)z;
+ for(int i=0;i<3;i++){
+   float4 d=sample4(displacement,qx,qz,256,offset);
+   qx=(float)x-fminf(6,fmaxf(-6,d.x*scale));qz=(float)z-fminf(6,fmaxf(-6,d.y*scale));
+ }
+ float4 h=sample4(input,qx,qz,256,offset);
+ float4 xp=sample4(displacement,qx+1,qz,256,offset),xm=sample4(displacement,qx-1,qz,256,offset);
+ float4 zp=sample4(displacement,qx,qz+1,256,offset),zm=sample4(displacement,qx,qz-1,256,offset);
+ float xx=1+(xp.x-xm.x)*scale*.5f,xz=(zp.x-zm.x)*scale*.5f;
+ float zx=(xp.y-xm.y)*scale*.5f,zz=1+(zp.y-zm.y)*scale*.5f;
+ float inv=1/fmaxf(.45f,xx*zz-xz*zx);
+ float nx=fminf(1.8f,fmaxf(-1.8f,(zz*h.y-zx*h.z)*inv));
+ float nz=fminf(1.8f,fmaxf(-1.8f,(xx*h.z-xz*h.y)*inv));
+ surface[id]=make_float4(h.x,nx,nz,nx*nx+nz*nz);
+}
+__global__ void ocean_foam(const float4 *surface,const float4 *displacement,const float4 *previous,
+                            float4 *next,const float4 *weather,float dt){
+ int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+ if(x>=256||z>=256)return;
+ int id=z*256+x;
+ float4 a=surface[65536+id];
+ float4 xp=displacement[65536+z*256+wrap(x+1,256)],xm=displacement[65536+z*256+wrap(x-1,256)];
+ float4 zp=displacement[65536+wrap(z+1,256)*256+x],zm=displacement[65536+wrap(z-1,256)*256+x];
+ float xx=1+(xp.x-xm.x)*128/37,zz=1+(zp.y-zm.y)*128/37;
+ float jac=xx*zz-(zp.x-zm.x)*(xp.y-xm.y)*square(128.0f/37);
+ float steep=sqrtf(a.y*a.y+a.z*a.z);
+ float breaking=smooth(.82f,.52f,jac)*smooth(.02f,.15f,a.x)*smooth(6,16,weather[0].x);
+ float drift=weather[0].x*.035f;
+ float4 old=sample4(previous,(float)x-(weather[1].x*drift+a.y*.4f)*dt*256/37,
+                              (float)z-(weather[1].y*drift+a.z*.4f)*dt*256/37,256,0);
+ float cover=sat(old.x*expf(-dt*.24f)+breaking*dt*2.4f);
+ float fresh=sat(old.y*expf(-dt*2.8f)+breaking*dt*6);
+ next[id]=make_float4(cover,fresh,jac,steep);
+}
+
 __device__ float3 ray(float sx, float sy, float aspect, float yaw,
                       float pitch) {
   float cy = cosf(yaw), syaw = sinf(yaw), cp = cosf(pitch), sp = sinf(pitch);
@@ -352,10 +406,11 @@ __device__ float4 water(const float4 *surf, const float4 *rip, float x, float z,
          c = sample4(surf, x * 256 / 293, z * 256 / 293, 256, 131072),
          r = rippleAt(rip, x, z, cx, cz);
   float fade = 1 / (1 + distance * .018f);
-  return make_float4(a.x + b.x + c.x + r.x, (a.y * fade + b.y + c.y + r.y),
-                     (a.z * fade + b.z + c.z + r.z),
+  float windFade=1/(1+square(distance*.003f));
+  return make_float4(a.x + b.x + c.x + r.x, (a.y * fade + b.y*windFade + c.y + r.y),
+                     (a.z * fade + b.z*windFade + c.z + r.z),
                      fmaxf(0, a.w - a.y * a.y - a.z * a.z) +
-                         .006f * (1 - fade));
+                         .006f * (1 - fade)+.022f*(1-windFade));
 }
 // RGB photon splats. Fixed-point atomics avoid floating-point atomic
 // requirements.
@@ -748,8 +803,11 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     float3 under = add(prod(Lfloor, Tv), Lin);
     col = add(add(mul(reflection, F), mul(under, 1 - F)), spec);
     float4 foamValue = sample4(foam, P.x * 256 / 37, P.z * 256 / 37, 256, 0);
-    float foamDetail = smooth(.26f, .69f, noise(P.x * 22, P.z * 22));
-    float foamMask = sat(foamValue.x * (.4f + .6f * foamDetail));
+    float fx=P.x-time*weather[1].x*weather[0].x*.035f;
+    float fz=P.z-time*weather[1].y*weather[0].x*.035f;
+    float foamDetail=smooth(.24f,.67f,noise(fx*13,fz*13));
+    float lace=smooth(.22f,.58f,noise(fx*2.7f,fz*2.7f));
+    float foamMask=sat(smooth(.015f,.32f,foamValue.x)*(.3f+.7f*lace)*(.35f+.65f*foamDetail)+foamValue.y*.4f);
     col = mix3(col, mul(v3(.73f, .81f, .78f), 1 - .5f * localStorm),
                foamMask * .85f);
     float haze = (1 - expf(-t * (.004f + .009f * localStorm))) * .8f;

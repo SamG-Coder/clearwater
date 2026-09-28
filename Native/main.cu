@@ -41,7 +41,7 @@ struct App {
  HWND energyLabel=nullptr,depthLabel=nullptr,exposureLabel=nullptr,speedLabel=nullptr;
  HFONT font=nullptr,heading=nullptr;HBRUSH background=nullptr;
  float weatherAge=-1,weatherRate=30,wind=5,rain=0,clouds=.28f,direction=.64f,strength=1;bool buoy=false;int foamIndex=0;
- Buffer<float4> environment,weather,foam[2];Buffer<float> spectralEnergy;
+ Buffer<float4> chopFFT[2],linearSurface,environment,weather,foam[2];Buffer<float> spectralEnergy;
  Camera cam;float energy=1,depth=1.6f,exposure=1.1f,time=0,cx=0,cz=0,accumulator=0;
  bool playing=true,glare=true,cruise=false,running=true,drag=false,tap=false,capture=false,resizePending=true;
  bool keys[256]={};POINT previous{},start{};float tapX=0,tapY=0;int quality=1152,view=0,width=0,height=0,ripIndex=0,frames=0;
@@ -70,6 +70,7 @@ struct App {
  }
  void transform(float4* a,float4* b,float sign){for(int axis=0;axis<2;axis++)for(int p=1;p<256;p*=2){fft_pass<<<wavesGrid,block>>>(a,b,p,axis,sign);std::swap(a,b);}}
  void initGpu(){
+  chopFFT[0].alloc(3*65536);chopFFT[1].alloc(3*65536);linearSurface.alloc(3*65536);
   environment.alloc(262144+16384);weather.alloc(2);spectralEnergy.alloc(3*65536);std::vector<float> initialEnergy(3*65536,1.f);check(cudaMemcpy(spectralEnergy.p,initialEnergy.data(),initialEnergy.size()*sizeof(float),cudaMemcpyHostToDevice));for(int i=0;i<2;i++)foam[i].alloc(65536);
   seed.alloc(3*65536);rows.alloc(768);scales.alloc(3);surface.alloc(3*65536);ripNormals.alloc(65536);photons.alloc(512*512*3);caustics.alloc(512*512);lensKernel.alloc(3*65536);
   for(int i=0;i<2;i++){fft[i].alloc(3*65536);rip[i].alloc(65536);lens[i].alloc(3*65536);}
@@ -93,8 +94,8 @@ struct App {
  void step(float dt){
   move(dt);float weatherDt=playing?dt*weatherRate:0;if(playing){time+=dt;if(weatherAge>=0)weatherAge+=weatherDt;}
   weather_update<<<1,1>>>(weather.p,weatherAge,direction,strength,wind,rain,clouds,weatherDt,cam.x,cam.z);
-  evolve_spectrum<<<wavesGrid,block>>>(seed.p,scales.p,fft[0].p,time,energy,depth,weather.p,spectralEnergy.p,weatherDt);transform(fft[0].p,fft[1].p,1);resolve_surface<<<wavesGrid,block>>>(fft[0].p,surface.p);
-  foam_step<<<ripGrid,block>>>(surface.p,foam[foamIndex].p,foam[1-foamIndex].p,weather.p,playing?dt:0);foamIndex=1-foamIndex;
+  evolve_spectrum<<<wavesGrid,block>>>(seed.p,scales.p,fft[0].p,time,energy,depth,weather.p,spectralEnergy.p,weatherDt);chop_spectrum<<<wavesGrid,block>>>(fft[0].p,chopFFT[0].p);transform(chopFFT[0].p,chopFFT[1].p,1);transform(fft[0].p,fft[1].p,1);resolve_surface<<<wavesGrid,block>>>(fft[0].p,linearSurface.p);chop_surface<<<wavesGrid,block>>>(linearSurface.p,chopFFT[0].p,surface.p);
+  ocean_foam<<<ripGrid,block>>>(surface.p,chopFFT[0].p,foam[foamIndex].p,foam[1-foamIndex].p,weather.p,playing?dt:0);foamIndex=1-foamIndex;
   if(playing)accumulator=std::min(.1f,accumulator+dt);
   while(accumulator>=1.f/120){float nx=std::round(cam.x*16)/16,nz=std::round(cam.z*16)/16;int sx=(int)std::round((nx-cx)*16),sz=(int)std::round((nz-cz)*16);cx=nx;cz=nz;
    ripple_step<<<ripGrid,block>>>(rip[ripIndex].p,rip[1-ripIndex].p,sx,sz,cx,cz,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,float(width)/height,tapX,tapY,tap?1:0,weather.p,time-accumulator);tap=false;ripIndex=1-ripIndex;accumulator-=1.f/120;
