@@ -1,0 +1,51 @@
+{
+  "calm": {
+    "mean": 0,
+    "fresh": 0,
+    "covered": 0,
+    "peak": 0,
+    "finite": true
+  },
+  "storm": {
+    "mean": 0.012514039972171667,
+    "fresh": 0.009515431074932287,
+    "covered": 0.0293731689453125,
+    "peak": 0.48117318749427795,
+    "finite": true
+  },
+  "performance": {
+    "width": 1920,
+    "height": 1080,
+    "samples": 40,
+    "renderGpuMedianMs": 3.86304,
+    "renderGpuP95Ms": 8.649088,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "scope": "complete GPU compute frame including two ripple substeps; excludes presentation"
+  },
+  "decay": {
+    "mean": 0.00026852723665563764,
+    "fresh": 3.221493589524167e-16,
+    "covered": 0,
+    "peak": 0.008978207595646381,
+    "finite": true
+  }
+}

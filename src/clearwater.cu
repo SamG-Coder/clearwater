@@ -69,6 +69,22 @@ __device__ float fbm(float x, float z) {
          .12f * noise(x * 4.12f, z * 4.12f) +
          .05f * noise(x * 8.36f, z * 8.36f);
 }
+// Triangular gradient noise avoids the rectangular plateaus of value noise.
+__device__ float foamCorner(float ix,float iz,float x,float z){
+ float w=fmaxf(0,.5f-x*x-z*z);
+ unsigned h=hashU((unsigned)((int)ix*1973+(int)iz*9277+89173));
+ float u=(h&1u)!=0u?x:-x,v=(h&2u)!=0u?z:-z;
+ float g=(h&4u)!=0u?u+v:(((h&8u)!=0u)?u:v);
+ return w*w*w*w*g;
+}
+__device__ float foamNoise(float x,float z){
+ float skew=(x+z)*.366025404f,ix=floorf(x+skew),iz=floorf(z+skew);
+ float unskew=(ix+iz)*.211324865f,px=x-ix+unskew,pz=z-iz+unskew;
+ float ox=px>pz?1.0f:0.0f,oz=1-ox;
+ float n=foamCorner(ix,iz,px,pz)+foamCorner(ix+ox,iz+oz,px-ox+.211324865f,pz-oz+.211324865f)
+        +foamCorner(ix+1,iz+1,px-.577350269f,pz-.577350269f);
+ return sat(.5f+n*35);
+}
 __device__ int wrap(int x, int n) { return (x % n + n) % n; }
 __device__ float lengthL(int c) {
   return c == 0 ? 4.6f : (c == 1 ? 37.0f : 293.0f);
@@ -320,12 +336,13 @@ __global__ void ocean_foam(const float4 *surface,const float4 *displacement,cons
  float xx=1+(xp.x-xm.x)*128/37,zz=1+(zp.y-zm.y)*128/37;
  float jac=xx*zz-(zp.x-zm.x)*(xp.y-xm.y)*square(128.0f/37);
  float steep=sqrtf(a.y*a.y+a.z*a.z);
- float breaking=smooth(.82f,.52f,jac)*smooth(.02f,.15f,a.x)*smooth(6,16,weather[0].x);
+ // Spawn on compressed positive crests, not the broad shoulders of every wave.
+ float breaking=smooth(.80f,.50f,jac)*smooth(.035f,.16f,a.x)*smooth(7,17,weather[0].x);
  float drift=weather[0].x*.035f;
  float4 old=sample4(previous,(float)x-(weather[1].x*drift+a.y*.4f)*dt*256/37,
                               (float)z-(weather[1].y*drift+a.z*.4f)*dt*256/37,256,0);
- float cover=sat(old.x*expf(-dt*.24f)+breaking*dt*2.4f);
- float fresh=sat(old.y*expf(-dt*2.8f)+breaking*dt*6);
+ float cover=sat(old.x*expf(-dt*.42f)+breaking*dt*2.2f);
+ float fresh=sat(old.y*expf(-dt*3.4f)+breaking*dt*7);
  next[id]=make_float4(cover,fresh,jac,steep);
 }
 
@@ -339,15 +356,17 @@ __device__ float3 ray(float sx, float sy, float aspect, float yaw,
 }
 // Repeatable world-space impacts, shared by the ripple solver and visible rings.
 __device__ float4 oceanDrop(float cx,float cz,float time,float rain){
- float phase=hash(cx,cz)*.85f,clock=time+phase,tick=floorf(clock/.85f),age=clock-tick*.85f;
+ float period=.58f+.45f*hash(cx+791,cz-381);
+ float phase=hash(cx,cz)*period,clock=time+phase,tick=floorf(clock/period),age=clock-tick*period;
  float active=hash(cx+tick*13,cz-tick*7)<rain*.8f?1.0f:0.0f;
- return make_float4((cx+.15f+.7f*hash(cx+tick,cz+17))*.7f,
-                    (cz+.15f+.7f*hash(cx+53,cz+tick))*.7f,age,active);
+ float u=(cx+hash(cx+tick*19,cz+17))*.7f;
+ float v=(cz+hash(cx+53,cz+tick*23))*.7f;
+ return make_float4(u*.92387953f-v*.38268343f,u*.38268343f+v*.92387953f,age,active);
 }
 __device__ float4 oceanImpact(float x,float z,float time,float rain){
  float nx=0,nz=0,flash=0;
  if(rain<.01f)return make_float4(0,0,0,0);
- float cx=floorf(x/.7f),cz=floorf(z/.7f);
+ float cx=floorf((x*.92387953f+z*.38268343f)/.7f),cz=floorf((z*.92387953f-x*.38268343f)/.7f);
  for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
   float4 drop=oceanDrop(cx+(float)i,cz+(float)j,time,rain);
   float dx=x-drop.x,dz=z-drop.y,r=sqrtf(dx*dx+dz*dz),age=drop.z;
@@ -446,9 +465,17 @@ __global__ void ripple_step(const float4 *previous, float4 *next, int shiftX,
   float wx = centerX + ((float)x - 128) * .0625f,
         wz = centerZ + ((float)z - 128) * .0625f;
   float rainfall = sat(weather[0].y + stormAt(weather, wx, wz) * .9f);
-  float4 event=oceanDrop(floorf(wx/.7f),floorf(wz/.7f),time,rainfall);
-  if(event.z<1.0f/120 && event.w>.5f)
-    h-=.018f*expf(-(square(wx-event.x)+square(wz-event.y))/.003f);
+  if(rainfall>.001f){
+   float dcx=floorf((wx*.92387953f+wz*.38268343f)/.7f);
+   float dcz=floorf((wz*.92387953f-wx*.38268343f)/.7f);
+   // Neighbour events contribute across cell edges; the acceleration grid
+   // must never clip the impulse or impose visible gaps between rain drops.
+   for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
+    float4 event=oceanDrop(dcx+i,dcz+j,time,rainfall);
+    if(event.z<1.0f/120 && event.w>.5f)
+      h-=.018f*expf(-(square(wx-event.x)+square(wz-event.y))/.003f);
+   }
+  }
   float edge = smooth(0, 16, (float)min(min(x, 255 - x), min(z, 255 - z)));
   next[id] =
       make_float4(h * lerp(.85f, 1, edge), vel * lerp(.85f, 1, edge), 0, 0);
@@ -902,14 +929,38 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
             3.2f);
     float3 under = add(prod(Lfloor, Tv), Lin);
     col = add(add(mul(reflection, F), mul(under, 1 - F)), spec);
-    float4 foamValue = sample4(foam, P.x * 256 / 37, P.z * 256 / 37, 256, 0);
+    // Cubic B-spline reconstruction using four bilinear taps. The 14 cm
+    // simulation cells must not appear as rectangles in close surface views.
+    float gx=P.x*256/37,gz=P.z*256/37;
+    float ux=frac(gx),uz=frac(gz);
+    float ax=square(1-ux)*(1-ux)/6,az=square(1-uz)*(1-uz)/6;
+    float dx=ux*ux*ux/6,dz=uz*uz*uz/6;
+    float bx=(3*ux*ux*ux-6*ux*ux+4)/6,bz=(3*uz*uz*uz-6*uz*uz+4)/6;
+    float cx=1-ax-bx-dx,cz=1-az-bz-dz;
+    float lx=floorf(gx)-1+bx/(ax+bx),lz=floorf(gz)-1+bz/(az+bz);
+    float hx=floorf(gx)+1+dx/(cx+dx),hz=floorf(gz)+1+dz/(cz+dz);
+    float4 foamValue=mix4(mix4(sample4(foam,lx,lz,256,0),sample4(foam,hx,lz,256,0),cx+dx),
+                          mix4(sample4(foam,lx,hz,256,0),sample4(foam,hx,hz,256,0),cx+dx),cz+dz);
     float fx=P.x-time*weather[1].x*weather[0].x*.035f;
     float fz=P.z-time*weather[1].y*weather[0].x*.035f;
-    float foamDetail=smooth(.24f,.67f,noise(fx*13,fz*13));
-    float lace=smooth(.22f,.58f,noise(fx*2.7f,fz*2.7f));
-    float foamMask=sat(smooth(.015f,.32f,foamValue.x)*(.3f+.7f*lace)*(.35f+.65f*foamDetail)+foamValue.y*.4f);
-    col = mix3(col, mul(v3(.73f, .81f, .78f), 1 - .5f * localStorm),
-               foamMask * .85f);
+    // Rotate and warp detail to remove the square value-noise lattice. No
+    // minimum opacity: weak trails open into separate islands and disappear.
+    float fu=fx*.8f+fz*.6f,fv=fz*.8f-fx*.6f;
+    float warp=foamNoise(fu*3.1f,fv*3.1f)-.5f;
+    float lace=(.7f*foamNoise(fu*19+warp*.8f,fv*19-warp*.7f)+.3f*foamNoise(fu*31-fv*17+9,fv*31+fu*17));
+    float fine=foamNoise((fu*.6f-fv*.8f)*85+warp,(fv*.6f+fu*.8f)*38);
+    float pixel=t*1.25f/height/fmaxf(.18f,nv);
+    fine=lerp(fine,.5f,smooth(.005f,.035f,pixel));
+    float density=sat(foamValue.x*2.2f+foamValue.y*1.2f);
+    float threshold=.70f-density*.56f;
+    float islands=smooth(threshold-.13f,threshold+.13f,lace*.78f+fine*.22f);
+    islands*=.45f+.55f*smooth(.28f,.7f,fine);
+    // Filter coverage, not the noise before thresholding: the latter turns
+    // unresolved bubbles into solid white slabs at middle distance.
+    islands=lerp(islands,density*density*.65f,smooth(.018f,.09f,pixel));
+    float foamMask=sat(islands*smooth(.018f,.17f,density)+foamValue.y*.35f);
+    float3 foamLight=mul(v3(.76f,.81f,.82f),(.65f+.35f*nl)*(1-.42f*localStorm));
+    col=mix3(col,foamLight,foamMask*.94f);
     col=add(col,mul(v3(.46f,.59f,.64f),impact.z));
     // A bounded near-surface spray volume, sourced only by fresh breaking foam.
     if(t<90 && weather[0].x>10){
