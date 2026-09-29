@@ -19,6 +19,10 @@ const state = {
   clouds: 0.28,
   direction: 0.64,
   buoy: false,
+  tornado: false,
+  tornadoX: 0,
+  tornadoZ: -650,
+  tornadoStrength: 1,
   frames: 0,
 };
 const diag = (window.clearwaterDiagnostics = {
@@ -67,6 +71,52 @@ let rt,
 const keys = new Set(),
   WG = [32, 32, 3],
   RG = [32, 32, 1];
+const tornadoGrid = [6, 576, 1], tornadoCells = 48 * 96 * 48;
+let tornadoVelocity, tornadoMoisture, tornadoPressure, tornadoRhs, tornadoSeaState, tornadoVolumeCache, tornadoCurl;
+let tornadoCloudMap, tornadoLighting, tornadoLightingDirty = true;
+let tornadoWaveFFT, tornadoWaveModes, tornadoWaveReset = true;
+let tornadoSpray, tornadoSprayImage, tornadoSprayReset = true;
+let skyEnvironmentCache = null, skyViewCache = null, tornadoViewCache = null;
+let tornadoMoistureIndex = 0, tornadoSeaIndex = 0, tornadoPressureIndex = 0;
+let tornadoAccumulator = 0, tornadoReset = true, tornadoSteps = 0;
+function tornadoStep(batch, dt) {
+  if (!state.tornado) return;
+  if (tornadoReset) {
+    skyEnvironmentCache=skyViewCache=tornadoViewCache=null;
+    tornadoSeaIndex = 0;
+    batch.dispatch(k.tornado_init.bind({velocity:tornadoVelocity[0],moisture:tornadoMoisture[0],pressure:tornadoPressure[0],cloudMap:tornadoCloudMap[0],sea:tornadoSeaState[0]}, {strength:state.tornadoStrength}), tornadoGrid);
+    tornadoMoistureIndex = tornadoPressureIndex = 0;
+    tornadoReset = false;
+    tornadoLightingDirty = true;
+    tornadoWaveReset = true;
+    tornadoSprayReset = true;
+  }
+  tornadoAccumulator = Math.min(tornadoAccumulator + dt, 2 / 30);
+  while (tornadoAccumulator >= 1 / 30) {
+    batch.dispatch(k.tornado_curl.bind({velocity:tornadoVelocity[0],curl:tornadoCurl}), tornadoGrid);
+    batch.dispatch(k.tornado_advect.bind({velocity:tornadoVelocity[0],moisture:tornadoMoisture[tornadoMoistureIndex],curl:tornadoCurl,cloudMap:tornadoCloudMap[tornadoMoistureIndex],nextVelocity:tornadoVelocity[1],nextMoisture:tornadoMoisture[1-tornadoMoistureIndex],nextCloudMap:tornadoCloudMap[1-tornadoMoistureIndex]}, {dt:1/30,strength:state.tornadoStrength}), tornadoGrid);
+    tornadoMoistureIndex = 1 - tornadoMoistureIndex;
+    batch.dispatch(k.tornado_divergence.bind({velocity:tornadoVelocity[1],rhs:tornadoRhs}), tornadoGrid);
+    for (let i=0;i<12;i++) {
+      batch.dispatch(k.tornado_pressure.bind({previous:tornadoPressure[tornadoPressureIndex],rhs:tornadoRhs,next:tornadoPressure[1-tornadoPressureIndex]}), tornadoGrid);
+      tornadoPressureIndex = 1 - tornadoPressureIndex;
+    }
+    batch.dispatch(k.tornado_project.bind({input:tornadoVelocity[1],pressure:tornadoPressure[tornadoPressureIndex],output:tornadoVelocity[0]}), tornadoGrid);
+    batch.dispatch(k.tornado_water.bind({previous:tornadoSeaState[tornadoSeaIndex],next:tornadoSeaState[1-tornadoSeaIndex],velocity:tornadoVelocity[0],pressure:tornadoPressure[tornadoPressureIndex]}, {dt:1/30,depth:+$("depth").value}), [12,12,1]);
+    tornadoSeaIndex = 1 - tornadoSeaIndex;
+    batch.dispatch(k.tornado_wave_force.bind({velocity:tornadoVelocity[0],pressure:tornadoPressure[tornadoPressureIndex],surface,forcing:tornadoWaveFFT[0]}, {tx:state.tornadoX,tz:state.tornadoZ,dt:1/30}),[32,32,1]);
+    transform(batch,tornadoWaveFFT,-1,[32,32,1]);
+    batch.dispatch(k.tornado_wave_evolve.bind({forcing:tornadoWaveFFT[0],modes:tornadoWaveModes,output:tornadoWaveFFT[1]}, {dt:1/30,depth:+$("depth").value,reset:tornadoWaveReset?1:0}),[32,32,1]);
+    transform(batch,[tornadoWaveFFT[1],tornadoWaveFFT[0]],1,[32,32,1]);
+    batch.dispatch(k.tornado_wave_resolve.bind({input:tornadoWaveFFT[1],sea:tornadoSeaState[tornadoSeaIndex]}),[32,32,1]);
+    batch.dispatch(k.tornado_spray_step.bind({particles:tornadoSpray,velocity:tornadoVelocity[0],sea:tornadoSeaState[tornadoSeaIndex],surface}, {tx:state.tornadoX,tz:state.tornadoZ,dt:1/30,tick:tornadoSteps,reset:tornadoSprayReset?1:0}),[32,4,1]);
+    tornadoSprayReset=false;
+    tornadoWaveReset=false;
+    tornadoAccumulator -= 1 / 30;
+    tornadoSteps++;
+    tornadoLightingDirty = true;
+  }
+}
 function fail(e) {
   failed = true;
   diag.errors.push(String(e.message || e));
@@ -122,6 +172,8 @@ $("storm").onclick = () => {
   play(true);
 };
 $("clearWeather").onclick = () => {
+  state.tornado = false;
+  $("tornado").textContent = "Start tornado";
   state.weatherAge = -1;
   state.wind = 5;
   state.rain = 0;
@@ -136,6 +188,21 @@ for (const id of ["wind", "rain", "clouds", "direction", "stormStrength"])
   };
 $("weatherRate").onchange = () => (state.weatherRate = +$("weatherRate").value);
 $("buoy").onchange = () => (state.buoy = $("buoy").checked);
+$("tornado").onclick = () => {
+  state.tornado = !state.tornado;
+  $("tornado").textContent = state.tornado ? "Stop tornado" : "Start tornado";
+  if (state.tornado) {
+    state.tornadoX = state.x + Math.sin(state.yaw) * 650;
+    state.tornadoZ = state.z - Math.cos(state.yaw) * 650;
+    state.pitch = .22;
+    state.clouds = .62;
+    $("clouds").value = state.clouds;
+    tornadoReset = true;
+    tornadoAccumulator = 0;
+    play(true);
+  }
+};
+$("tornadoStrength").oninput = () => (state.tornadoStrength = +$("tornadoStrength").value);
 let drag = null;
 canvas.onpointerdown = (e) => {
   drag = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY };
@@ -193,7 +260,10 @@ async function resize() {
   height = Math.ceil((width * innerHeight) / innerWidth / 8) * 8;
   canvas.width = width;
   canvas.height = height;
-  for (const b of [environment, hdr, ...(bloom || []), pixels]) if (b) rt.destroyBuffer(b);
+  for (const b of [environment, hdr, ...(bloom || []), pixels, tornadoVolumeCache,tornadoSprayImage]) if (b) rt.destroyBuffer(b);
+  skyEnvironmentCache=skyViewCache=tornadoViewCache=null;
+  tornadoSprayImage=rt.createBuffer(width*height*4);
+  tornadoVolumeCache=rt.createBuffer(width*height/2*16);
   environment=rt.createBuffer((81920+width*height/4)*16);
   hdr = rt.createBuffer(width * height * 16);
   bloom = [
@@ -311,7 +381,7 @@ function ripples(batch, dt) {
     RG,
   );
 }
-function transform(batch, pair, sign) {
+function transform(batch, pair, sign, grid = WG) {
   let src = 0;
   for (let axis = 0; axis < 2; axis++)
     for (let p = 1; p < 256; p *= 2) {
@@ -320,7 +390,7 @@ function transform(batch, pair, sign) {
           { input: pair[src], output: pair[1 - src] },
           { p, axis, sign },
         ),
-        WG,
+        grid,
       );
       src = 1 - src;
     }
@@ -356,10 +426,32 @@ function setupLens() {
 function render(timestampWrites, simulate = false) {
   const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
-  if (simulate) { waves(batch); ripples(batch, 1/60); }
-  batch.dispatch(k.sky_environment.bind({environment,weather}, {camX:state.x,camY:state.y,camZ:state.z,time:state.time}),[64,16,1]);
-  batch.dispatch(k.sky_view.bind({environment,weather},{width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch,time:state.time}),[Math.ceil(width/16),Math.ceil(height/16),1]);
-  batch.dispatch(k.cloud_shadow.bind({environment,weather}, {camX:state.x,camZ:state.z,time:state.time}),[16,16,1]);
+  if (simulate) { waves(batch); ripples(batch, 1/60); tornadoStep(batch,1/30); }
+  if(state.tornado) {
+    const volumeKey=[state.x,state.y,state.z,state.yaw,state.pitch,width,height,state.tornadoX,state.tornadoZ,tornadoSteps].join(':');
+    if(tornadoLightingDirty) {
+      batch.dispatch(k.tornado_light.bind({moisture:tornadoMoisture[tornadoMoistureIndex],cloudMap:tornadoCloudMap[tornadoMoistureIndex],lighting:tornadoLighting}),tornadoGrid);
+      tornadoLightingDirty=false;
+    }
+    if(tornadoViewCache!==volumeKey) {
+      batch.dispatch(k.tornado_view.bind({lighting:tornadoLighting,volume:tornadoVolumeCache}, {width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch,tx:state.tornadoX,tz:state.tornadoZ}),[Math.ceil(width/16),Math.ceil(height/16),1]);
+      tornadoViewCache=volumeKey;
+    }
+  }
+  const cloudBuffers={environment,weather,cloudMap:tornadoCloudMap[tornadoMoistureIndex]};
+  const cloudParams={camX:state.x,camY:state.y,camZ:state.z,time:state.time,tornadoOn:state.tornado?1:0,tx:state.tornadoX,tz:state.tornadoZ};
+  const {camY: unusedCloudHeight,...shadowParams}=cloudParams;
+  const skyKey=[state.x,state.y,state.z,state.yaw,state.pitch,width,height,state.clouds,state.wind,state.rain,state.direction,state.stormStrength,state.tornado,state.tornadoX,state.tornadoZ,state.weatherAge>=0].join(':');
+  const refreshSky=(cache,seconds,steps)=>!cache||cache.key!==skyKey||state.time<cache.time||state.time-cache.time>=seconds||tornadoSteps-cache.steps>=steps||state.weatherAge>=0;
+  if(refreshSky(skyEnvironmentCache,.1,3)) {
+    batch.dispatch(k.sky_environment.bind(cloudBuffers,cloudParams),[64,16,1]);
+    batch.dispatch(k.cloud_shadow.bind(cloudBuffers,shadowParams),[16,16,1]);
+    skyEnvironmentCache={key:skyKey,time:state.time,steps:tornadoSteps};
+  }
+  if(refreshSky(skyViewCache,1/30,2)) {
+    batch.dispatch(k.sky_view.bind(cloudBuffers,{...cloudParams,width,height,yaw:state.yaw,pitch:state.pitch}),[Math.ceil(width/16),Math.ceil(height/16),1]);
+    skyViewCache={key:skyKey,time:state.time,steps:tornadoSteps};
+  }
   batch
     .dispatch(k.clear_caustics.bind({ photons }), [64, 64, 1])
     .dispatch(
@@ -378,6 +470,8 @@ function render(timestampWrites, simulate = false) {
         weather,
         foam: foam[foamIndex],
         environment,
+        tornadoVolumeCache,
+        tornadoSeaState: tornadoSeaState[tornadoSeaIndex],
       },
       {
         width,
@@ -393,10 +487,18 @@ function render(timestampWrites, simulate = false) {
         time: state.time,
         view: +$("view").value,
         buoy: state.buoy ? 1 : 0,
+        tornadoOn: state.tornado ? 1 : 0,
+        tornadoX: state.tornadoX,
+        tornadoZ: state.tornadoZ,
       },
     ),
     grid,
   );
+  if(state.tornado && +$("view").value===0) {
+    batch.dispatch(k.tornado_spray_clear.bind({spray:tornadoSprayImage},{width,height}),grid);
+    batch.dispatch(k.tornado_spray_draw.bind({particles:tornadoSpray,spray:tornadoSprayImage},{width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch,tx:state.tornadoX,tz:state.tornadoZ}),[32,4,1]);
+    batch.dispatch(k.tornado_spray_composite.bind({spray:tornadoSprayImage,hdr},{width,height}),grid);
+  }
   if ($("glare").checked) {
     batch.dispatch(
       k.glare_source.bind({ hdr, output: lensFFT[0] }, { width, height }),
@@ -512,6 +614,7 @@ async function frame(now) {
       const batch = rt.batch();
       waves(batch);
       ripples(batch, state.playing ? dt : 0);
+      tornadoStep(batch, frameDt);
       batch.submit();
       render();
       await rt.idle();
@@ -544,6 +647,51 @@ async function exclusive(fn) {
 window.clearwaterLab = {
   state,
   pause: () => play(false),
+  async tornadoCouplingTest() {
+    return exclusive(async () => {
+      const calm=rt.createBuffer(3*65536*16),coupled=rt.createBuffer(65536*16),control=rt.createBuffer(65536*16);
+      try {
+        const batch=rt.batch(),params={tx:state.tornadoX,tz:state.tornadoZ,dt:1/30};
+        batch.dispatch(k.tornado_wave_force.bind({velocity:tornadoVelocity[0],pressure:tornadoPressure[tornadoPressureIndex],surface,forcing:coupled},params),[32,32,1]);
+        batch.dispatch(k.tornado_wave_force.bind({velocity:tornadoVelocity[0],pressure:tornadoPressure[tornadoPressureIndex],surface:calm,forcing:control},params),[32,32,1]);
+        batch.submit();await rt.idle();
+        const a=await rt.read(coupled),b=await rt.read(control);
+        let windWork=0,controlWindWork=0,pressureDifference=0,farForce=0;
+        for(let z=0;z<256;z++)for(let x=0;x<256;x++) {
+          const i=(z*256+x)*4;
+          windWork+=a[i+2]*a[i+2];controlWindWork+=b[i+2]*b[i+2];
+          pressureDifference=Math.max(pressureDifference,Math.abs(a[i]-b[i]));
+          if(Math.hypot(x-128,z-128)*1.125>=125)farForce=Math.max(farForce,Math.abs(a[i]),Math.abs(a[i+2]));
+        }
+        return {windWorkRms:Math.sqrt(windWork/65536),controlWindWorkRms:Math.sqrt(controlWindWork/65536),pressureDifference,farForce};
+      } finally {
+        for(const b of [calm,coupled,control])rt.destroyBuffer(b);
+        k.tornado_wave_force.clearBindings();
+      }
+    });
+  },
+  async tornadoAdvance(steps = 30) {
+    return exclusive(async () => {
+      play(false);
+      for (let i=0;i<steps;i++) {
+        const batch=rt.batch();tornadoStep(batch,1/30);batch.submit();
+        if(i%10===9)await rt.idle();
+      }
+      render();await rt.idle();
+    });
+  },
+  async tornadoInspect() {
+    return exclusive(async () => ({
+      velocity:Array.from(await rt.read(tornadoVelocity[0])),
+      unprojected:Array.from(await rt.read(tornadoVelocity[1])),
+      moisture:Array.from(await rt.read(tornadoMoisture[tornadoMoistureIndex])),
+      sea:Array.from(await rt.read(tornadoSeaState[tornadoSeaIndex])),
+      cloudMap:Array.from(await rt.read(tornadoCloudMap[tornadoMoistureIndex])),
+      sprayParticles:Array.from(await rt.read(tornadoSpray)),
+      waveModes:Array.from(await rt.read(tornadoWaveModes)),
+      steps:tornadoSteps,
+    }));
+  },
   // Explicit diagnostic only: timestamp readbacks never enter the live frame loop.
   async benchmark(samples = 40, simulate = false) {
     return exclusive(async () => {
@@ -566,7 +714,7 @@ window.clearwaterLab = {
           read.unmap();
         }
         times.sort((a,b) => a-b);
-        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: simulate ? "complete GPU compute frame including two ripple substeps; excludes presentation" : "caustics, sky, water, glare and post; excludes wave simulation and presentation"};
+        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: simulate ? "Stationary-camera GPU frame with ocean, local FFT, spray and one 30 Hz tornado step; normal sky-cache refresh cadence; excludes presentation" : "Paused stationary-camera GPU rendering with reused sky/volume caches; excludes simulation and presentation"};
       } finally {querySet.destroy(); resolve.destroy(); read.destroy();}
     });
   },
@@ -788,6 +936,17 @@ try {
   chopFFT=[rt.createBuffer(3*65536*16),rt.createBuffer(3*65536*16)];
   linearSurface=rt.createBuffer(3*65536*16);
   weather = rt.createBuffer(2 * 16);
+  tornadoVelocity = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
+  tornadoMoisture = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
+  tornadoPressure = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
+  tornadoRhs = rt.createBuffer(tornadoCells*16);
+  tornadoCurl = rt.createBuffer(tornadoCells*16);
+  tornadoCloudMap = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
+  tornadoLighting = rt.createBuffer(tornadoCells*16);
+  tornadoSeaState = [rt.createBuffer((96*96+65536)*16),rt.createBuffer((96*96+65536)*16)];
+  tornadoWaveFFT = [rt.createBuffer(65536*16),rt.createBuffer(65536*16)];
+  tornadoWaveModes = rt.createBuffer(65536*16);
+  tornadoSpray = rt.createBuffer(8192*2*16);
   spectralEnergy = rt.createBuffer(new Float32Array(3 * 65536).fill(1));
   foam = [rt.createBuffer(3 * 262144 * 16), rt.createBuffer(3 * 262144 * 16)];
   lensKernel = rt.createBuffer(3 * 65536 * 16);

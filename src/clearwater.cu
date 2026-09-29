@@ -697,7 +697,340 @@ __device__ float cloudLobes(float3 p) {
   }
   return sat(1-sqrtf(nearest));
 }
-__device__ float cloudDensity(float3 p, const float4 *weather, float time, int detail) {
+// Local moist-flow domain: 48 x 96 x 48 cells, 6 metres per cell.
+// Velocity is projected with matching backward-divergence/forward-gradient
+// operators. Moisture, potential-temperature anomaly and spray are transported.
+// This is a driven Boussinesq flow, not a storm-scale atmospheric forecast.
+__device__ int tornadoIndex(int x,int y,int z) {
+  x=(int)fminf(47,fmaxf(0,(float)x));
+  y=(int)fminf(95,fmaxf(0,(float)y));
+  z=(int)fminf(47,fmaxf(0,(float)z));
+  return (z*96+y)*48+x;
+}
+__device__ float4 tornadoSample(const float4 *a,float3 p) {
+  float x=fminf(47,fmaxf(0,p.x)), y=fminf(95,fmaxf(0,p.y)), z=fminf(47,fmaxf(0,p.z));
+  int ix=(int)floorf(x),iy=(int)floorf(y),iz=(int)floorf(z);
+  return mix4(mix4(mix4(a[tornadoIndex(ix,iy,iz)],a[tornadoIndex(ix+1,iy,iz)],frac(x)),
+                   mix4(a[tornadoIndex(ix,iy+1,iz)],a[tornadoIndex(ix+1,iy+1,iz)],frac(x)),frac(y)),
+              mix4(mix4(a[tornadoIndex(ix,iy,iz+1)],a[tornadoIndex(ix+1,iy,iz+1)],frac(x)),
+                   mix4(a[tornadoIndex(ix,iy+1,iz+1)],a[tornadoIndex(ix+1,iy+1,iz+1)],frac(x)),frac(y)),frac(z));
+}
+__device__ float3 tornadoCell(int x,int y,int z) {return v3(((float)x-23.5f)*6,((float)y+.5f)*6,((float)z-23.5f)*6);}
+__device__ float3 tornadoWind(float3 p,float strength) {
+  float r2=p.x*p.x+p.z*p.z, radius=18+p.y*.045f;
+  float spin=2*38*strength*radius/(radius*radius+r2);
+  float inflow=5*expf(-p.y/100)/(sqrtf(r2)+15);
+  return v3(-p.z*spin-p.x*inflow,14*strength*expf(-r2/3200)*smooth(0,30,p.y),p.x*spin-p.z*inflow);
+}
+__global__ void tornado_curl(const float4 *velocity,float4 *curl) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float4 l=velocity[tornadoIndex(x-1,y,z)],r=velocity[tornadoIndex(x+1,y,z)],
+         b=velocity[tornadoIndex(x,y-1,z)],t=velocity[tornadoIndex(x,y+1,z)],
+         n=velocity[tornadoIndex(x,y,z-1)],f=velocity[tornadoIndex(x,y,z+1)];
+  float3 w=v3((t.z-b.z-f.y+n.y)/12,(f.x-n.x-r.z+l.z)/12,(r.y-l.y-t.x+b.x)/12);
+  curl[i]=make_float4(w.x,w.y,w.z,sqrtf(dot3(w,w)));
+}
+__global__ void tornado_init(float4 *velocity,float4 *moisture,float4 *pressure,float4 *cloudMap,float4 *sea,float strength) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x), yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float3 p=tornadoCell(x,y,z),v=tornadoWind(p,strength);
+  v.x+=1.8f*sinf(p.y*.047f+p.z*.08f);v.z+=1.8f*sinf(p.y*.037f+p.x*.08f);
+  float bend=12*sinf(p.y*.007f)*smooth(0,200,p.y);
+  float radius=15+65*powf(p.y/576,4),r2=square(p.x-bend)+square(p.z-bend*.4f);
+  // Warm-start a mature moist vortex; subsequent frames solve its evolution.
+  float structure=.65f+.7f*noise3(mul(p,.07f));
+  float liquid=.0022f*expf(-r2/(radius*radius))*structure;
+  velocity[i]=make_float4(v.x,v.y,v.z,0);
+  moisture[i]=make_float4(.009f+.007f*expf(-r2/(2500+radius*radius)),liquid,1*expf(-r2/3600),.7f*expf(-square((sqrtf(r2)-24)/15)-p.y/12));
+  pressure[i]=make_float4(0,0,0,0);
+  cloudMap[i]=make_float4(p.x,p.y,p.z,liquid);
+  if(i<74752)sea[i]=make_float4(0,0,0,0);
+}
+__global__ void tornado_advect(const float4 *velocity,const float4 *moisture,const float4 *curl,const float4 *cloudMap,float4 *nextVelocity,float4 *nextMoisture,float4 *nextCloudMap,float dt,float strength) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float3 p=tornadoCell(x,y,z),cell=v3((float)x,(float)y,(float)z);
+  float4 old=velocity[i];
+  float3 mid=sub(cell,mul(v3(old.x,old.y,old.z),dt/12));
+  float4 vm=tornadoSample(velocity,mid);
+  float3 back=sub(cell,mul(v3(vm.x,vm.y,vm.z),dt/6));
+  float4 a=tornadoSample(velocity,back),q=tornadoSample(moisture,back);
+  float3 target=tornadoWind(p,strength);
+  float3 gradient=norm(v3(curl[tornadoIndex(x+1,y,z)].w-curl[tornadoIndex(x-1,y,z)].w,
+                         curl[tornadoIndex(x,y+1,z)].w-curl[tornadoIndex(x,y-1,z)].w,
+                         curl[tornadoIndex(x,y,z+1)].w-curl[tornadoIndex(x,y,z-1)].w));
+  float4 omega=curl[i];
+  // Restore circulation lost to coarse-grid semi-Lagrangian transport.
+  float3 confinement=mul(v3(gradient.y*omega.z-gradient.z*omega.y,
+                           gradient.z*omega.x-gradient.x*omega.z,
+                           gradient.x*omega.y-gradient.y*omega.x),1.2f*dt);
+  a.x+=confinement.x;a.y+=confinement.y;a.z+=confinement.z;
+  float r=sqrtf(p.x*p.x+p.z*p.z),edge=smooth(95,140,r);
+  // Open driven lateral boundary, warm ocean inflow and buoyancy in the core.
+  float relax=(.025f+edge*.8f)*dt;
+  a.x=lerp(a.x,target.x,relax);a.z=lerp(a.z,target.z,relax);
+  a.y+=dt*(9.81f*q.z/291-.08f*a.y-9.81f*q.y);
+  a.y=lerp(a.y,target.y,edge*dt);
+  float heat=expf(-r*r/3600)*expf(-p.y/35);
+  q.z+=dt*(heat*.15f-q.z*.035f);
+  q.x=lerp(q.x,.009f+.007f*expf(-r*r/1800),dt*(edge*.5f+heat*.8f));
+  // Saturation decreases with altitude and pressure drop in the rotating core.
+  float speed2=a.x*a.x+a.z*a.z;
+  float temperature=18+q.z-.0065f*p.y-1.2f*strength*strength*expf(-r*r/2000);
+  float saturation=.013f*expf(.065f*(temperature-18));
+  float phase=(q.x-saturation)*(1-expf(-dt*2));
+  phase=fmaxf(-q.y,phase); q.x-=phase;q.y+=phase;q.z+=phase*2490;
+  q.y=fmaxf(0,q.y)*(1-dt*.012f);
+  // Fine mist is lofted by surface shear and settles relative to the airflow.
+  float lift=2.8f*expf(-p.y/18)-.8f;
+  q.w=tornadoSample(moisture,sub(back,v3(0,lift*dt/6,0))).w*expf(-dt*.42f)
+      +dt*sat((sqrtf(speed2)-18)/18)*expf(-p.y/8)*1.35f;
+  a.y=fmaxf(-45,fminf(65,a.y));
+  if(y==0)a.y=fmaxf(0,a.y);
+  nextVelocity[i]=make_float4(a.x,a.y,a.z,0);
+  nextMoisture[i]=make_float4(fmaxf(0,q.x),q.y,q.z,fminf(3,q.w));
+  float4 mapped=tornadoSample(cloudMap,back);
+  nextCloudMap[i]=mix4(mapped,make_float4(p.x,p.y,p.z,0),edge*dt*.5f);
+  nextCloudMap[i].w=q.y;
+}
+__global__ void tornado_divergence(const float4 *velocity,float4 *rhs) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float4 a=velocity[i];
+  float div=(a.x-velocity[tornadoIndex(x-1,y,z)].x+a.y-(y==0?0:velocity[tornadoIndex(x,y-1,z)].y)+a.z-velocity[tornadoIndex(x,y,z-1)].z)/6;
+  rhs[i]=make_float4(div,0,0,0);
+}
+__global__ void tornado_pressure(const float4 *previous,const float4 *rhs,float4 *next) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float sum=previous[tornadoIndex(x-1,y,z)].x+previous[tornadoIndex(x+1,y,z)].x+previous[tornadoIndex(x,y-1,z)].x+previous[tornadoIndex(x,y+1,z)].x+previous[tornadoIndex(x,y,z-1)].x+previous[tornadoIndex(x,y,z+1)].x;
+  float pressure=(sum-36*rhs[i].x)/6;
+  if(x==0||x==47||z==0||z==47||y==95)pressure=0;
+  next[i]=make_float4(pressure,0,0,0);
+}
+__global__ void tornado_project(const float4 *input,const float4 *pressure,float4 *output) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float4 a=input[i];float p=pressure[i].x;
+  a.x-=(pressure[tornadoIndex(x+1,y,z)].x-p)/6;
+  a.y-=(pressure[tornadoIndex(x,y+1,z)].x-p)/6;
+  a.z-=(pressure[tornadoIndex(x,y,z+1)].x-p)/6;
+  output[i]=a;
+}
+// 96-square local shallow-water patch: height, horizontal flux velocities, foam.
+__device__ float4 tornadoSea(const float4 *a,int x,int z) {
+  return a[(int)fminf(95,fmaxf(0,(float)z))*96+(int)fminf(95,fmaxf(0,(float)x))];
+}
+// A forced dispersive FFT patch. Spatial forcing preserves the rotating wind
+// direction; modifying the global ocean spectrum would affect distant water.
+__global__ void tornado_wave_force(const float4 *velocity,const float4 *pressure,const float4 *surface,float4 *forcing,float tx,float tz,float dt) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=256||z>=256)return;
+  float px=((float)x-128)*1.125f,pz=((float)z-128)*1.125f;
+  float3 cell=v3(px/6+23.5f,0,pz/6+23.5f);
+  float4 wind=tornadoSample(velocity,cell);
+  float speed=sqrtf(wind.x*wind.x+wind.z*wind.z);
+  float window=1-smooth(95,125,sqrtf(px*px+pz*pz));
+  float4 wave=sample4(surface,(px+tx)*256/37,(pz+tz)*256/37,256,65536);
+  // Hydrostatic target from the air pressure potential, and crest-scale wind
+  // work. Only medium ocean waves are sampled: they are resolved by this patch.
+  float pressureHeight=-.0012f*tornadoSample(pressure,cell).x/(dt*9.81f);
+  float directional=(wind.x*wave.y+wind.z*wave.z)/fmaxf(1,speed);
+  float windWork=smooth(10,38,speed)*(.10f*wave.x-.06f*directional);
+  forcing[z*256+x]=make_float4(pressureHeight*window,0,windWork*window,0);
+}
+__global__ void tornado_wave_evolve(const float4 *forcing,float4 *modes,float4 *output,float dt,float depth,int reset) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=256||z>=256)return;
+  int i=z*256+x;
+  float kx=6.283185307f*(float)(x<128?x:x-256)/288;
+  float kz=6.283185307f*(float)(z<128?z:z-256)/288,k=sqrtf(kx*kx+kz*kz);
+  float th=(1-expf(-2*k*depth))/(1+expf(-2*k*depth));
+  float omega2=(9.81f*k+.000074f*k*k*k)*th,omega=sqrtf(fmaxf(.000001f,omega2));
+  float4 old=reset!=0?make_float4(0,0,0,0):modes[i],f=forcing[i];
+  float fr=(omega2*f.x+f.z)/65536,fi=(omega2*f.y+f.w)/65536;
+  float co=cosf(omega*dt),si=sinf(omega*dt),damp=expf(-dt*(.035f+.018f*k*k));
+  float hr=(old.x*co+old.z*si/omega+fr*(1-co)/fmaxf(.000001f,omega2))*damp;
+  float hi=(old.y*co+old.w*si/omega+fi*(1-co)/fmaxf(.000001f,omega2))*damp;
+  float vr=(old.z*co-old.x*omega*si+fr*si/omega)*damp;
+  float vi=(old.w*co-old.y*omega*si+fi*si/omega)*damp;
+  if(i==0){hr=0;hi=0;vr=0;vi=0;}
+  modes[i]=make_float4(hr,hi,vr,vi);
+  if(x==128)kx=0;if(z==128)kz=0;
+  output[i]=make_float4((1-kx)*hr,(1-kx)*hi,-kz*hi,kz*hr);
+}
+__global__ void tornado_wave_resolve(const float4 *input,float4 *sea) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=256||z>=256)return;
+  float px=((float)x-128)*1.125f,pz=((float)z-128)*1.125f,r=sqrtf(px*px+pz*pz);
+  float t=sat((r-100)/35),window=1-t*t*(3-2*t),dw=-6*t*(1-t)/(35*fmaxf(1,r));
+  float4 a=input[z*256+x];
+  sea[9216+z*256+x]=make_float4(a.x*window,a.y*window+a.x*dw*px,a.z*window+a.x*dw*pz,sat((sqrtf(a.y*a.y+a.z*a.z)-.12f)*3)*window);
+}
+__global__ void tornado_water(const float4 *previous,float4 *next,const float4 *velocity,const float4 *pressure,float dt,float depth) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=96||z>=96)return;
+  float4 a=tornadoSea(previous,x,z),l=tornadoSea(previous,x-1,z),r=tornadoSea(previous,x+1,z),b=tornadoSea(previous,x,z-1),f=tornadoSea(previous,x,z+1);
+  float4 wind=tornadoSample(velocity,v3(((float)x+.5f)*.5f-.5f,0,((float)z+.5f)*.5f-.5f));
+  float speed=sqrtf(wind.x*wind.x+wind.z*wind.z);
+  float3 cell=v3(((float)x+.5f)*.5f-.5f,0,((float)z+.5f)*.5f-.5f);
+  float damp=expf(-dt*(.12f+smooth(110,140,sqrtf(square(((float)x-47.5f)*3)+square(((float)z-47.5f)*3)))*2));
+  // Air/water density ratio and wind drag transfer horizontal momentum.
+  a.y=(a.y-dt*9.81f*(r.x-a.x)/3+dt*.0012f*.0025f*speed*wind.x/fmaxf(.5f,depth))*damp;
+  a.z=(a.z-dt*9.81f*(f.x-a.x)/3+dt*.0012f*.0025f*speed*wind.z/fmaxf(.5f,depth))*damp;
+  a.x=(a.x-dt*depth*(a.y-l.y+a.z-b.z)/3)*damp;
+  float foamX=fminf(94.99f,fmaxf(0,(float)x-(a.y+wind.x*.02f)*dt/3));
+  float foamZ=fminf(94.99f,fmaxf(0,(float)z-(a.z+wind.z*.02f)*dt/3));
+  a.w=sat(sample4(previous,foamX,foamZ,96,0).w*expf(-dt*.18f)+dt*sat((speed-22)/20)*.24f);
+  next[z*96+x]=a;
+}
+__device__ float4 tornadoWaterAt(const float4 *sea,float x,float z,float tx,float tz) {
+  float u=(x-tx)/3+47.5f,v=(z-tz)/3+47.5f;
+  if(u<1||u>94||v<1||v>94)return make_float4(0,0,0,0);
+  float4 a=sample4(sea,u,v,96,0);
+  float dx=(sample4(sea,u+1,v,96,0).x-sample4(sea,u-1,v,96,0).x)/6;
+  float dz=(sample4(sea,u,v+1,96,0).x-sample4(sea,u,v-1,96,0).x)/6;
+  float4 spectral=sample4(sea,(x-tx)/1.125f+128,(z-tz)/1.125f+128,256,9216);
+  return make_float4(a.x+spectral.x,dx+spectral.y,dz+spectral.z,sat(a.w+spectral.w));
+}
+__global__ void tornado_light(const float4 *moisture,const float4 *cloudMap,float4 *lighting) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=48||yz>=4608)return;
+  int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
+  float4 q=moisture[i],mapped=cloudMap[i];
+  float3 p=v3((float)x,(float)y,(float)z);
+  float4 s1=tornadoSample(moisture,add(p,v3(.18f,1.03f,-1.70f)));
+  float4 s2=tornadoSample(moisture,add(p,v3(.54f,3.09f,-5.11f)));
+  float4 s3=tornadoSample(moisture,add(p,v3(1.34f,7.73f,-12.79f)));
+  float optical=(s1.y*12+s2.y*24+s3.y*54)*45+(s1.w*12+s2.w*24+s3.w*54)*.075f;
+  float direct=expf(-optical);
+  float3 color=add(v3(.13f,.18f,.235f),mul(v3(.72f,.66f,.56f),direct));
+  // Unresolved density variation follows transported material coordinates.
+  float detail=.6f+.8f*noise3(v3(mapped.x*.12f,mapped.y*.12f,mapped.z*.12f));
+  lighting[i]=make_float4(color.x,color.y,color.z,(q.y*45+q.w*.075f)*detail);
+}
+// Coarse spray parcels supplement the Eulerian mist with short ballistic arcs.
+__global__ void tornado_spray_step(float4 *particles,const float4 *velocity,const float4 *sea,const float4 *surface,float tx,float tz,float dt,int tick,int reset) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y),i=y*256+x;
+  if(x>=256||y>=32)return;
+  float4 p=particles[i*2],v=particles[i*2+1];
+  if(reset!=0||p.w<=0||p.y<0||fabsf(p.x)>135||fabsf(p.z)>135) {
+    unsigned seed=(unsigned)i*1973u+(unsigned)tick*9277u;
+    float angle=random(seed)*6.283185307f,r=18+random(seed+17u)*38;
+    p=make_float4(cosf(angle)*r,0,sinf(angle)*r,2+random(seed+31u)*4);
+    float4 air=tornadoSample(velocity,v3(p.x/6+23.5f,0,p.z/6+23.5f));
+    float speed=sqrtf(air.x*air.x+air.z*air.z);
+    float4 wave=sample4(sea,p.x/1.125f+128,p.z/1.125f+128,256,9216);
+    float4 ocean=sample4(surface,(p.x+tx)*256/37,(p.z+tz)*256/37,256,65536);
+    float crest=sqrtf(square(wave.y+ocean.y)+square(wave.z+ocean.z));
+    if(speed<18||random(seed+53u)>sat((speed-16)/30)+crest){p.w=0;}
+    p.y=fmaxf(.06f,wave.x+ocean.x+.12f);
+    v=make_float4(air.x*.22f+p.x/r*1.5f,3+speed*.12f+crest*5,air.z*.22f+p.z/r*1.5f,.045f+random(seed+73u)*.12f);
+  } else {
+    float4 air=tornadoSample(velocity,v3(p.x/6+23.5f,p.y/6-.5f,p.z/6+23.5f));
+    float drag=1-expf(-dt*2.5f);
+    v.x=lerp(v.x,air.x,drag);v.z=lerp(v.z,air.z,drag);
+    v.y=lerp(v.y,air.y,drag)-9.81f*dt;
+    p.x+=v.x*dt;p.y+=v.y*dt;p.z+=v.z*dt;p.w-=dt;
+  }
+  particles[i*2]=p;particles[i*2+1]=v;
+}
+__global__ void tornado_spray_clear(unsigned *spray,int width,int height) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x<width&&y<height)spray[y*width+x]=0;
+}
+__global__ void tornado_spray_draw(const float4 *particles,unsigned *spray,int width,int height,float camX,float camY,float camZ,float yaw,float pitch,float tx,float tz) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y),i=y*256+x;
+  if(x>=256||y>=32)return;
+  float4 p=particles[i*2],v=particles[i*2+1];if(p.w<=0||p.y<.02f)return;
+  float3 delta=v3(p.x+tx-camX,p.y-camY,p.z+tz-camZ);
+  float3 forward=v3(sinf(yaw)*cosf(pitch),sinf(pitch),-cosf(yaw)*cosf(pitch));
+  float3 right=v3(cosf(yaw),0,sinf(yaw)),up=v3(-sinf(yaw)*sinf(pitch),cosf(pitch),cosf(yaw)*sinf(pitch));
+  float distance=dot3(delta,forward);if(distance<.2f)return;
+  float focal=(float)height/(2*.62487f);
+  float sx=(float)width*.5f+dot3(delta,right)*focal/distance,sy=(float)height*.5f-dot3(delta,up)*focal/distance;
+  float radius=fminf(2.2f,v.w*focal/distance),energy=fminf(.3f,radius*radius*.45f)*smooth(0,.4f,p.w);
+  if(sx<0||sx>width||sy<0||sy>height)return;
+  for(int j=-2;j<=2;j++)for(int k=-2;k<=2;k++){
+    int px=(int)sx+k,py=(int)sy+j;if(px<0||px>=width||py<0||py>=height)continue;
+    float r2=square(((float)px+.5f-sx))+square(((float)py+.5f-sy));
+    unsigned amount=(unsigned)(65536*energy*expf(-r2/fmaxf(.6f,radius*radius)));
+    atomicAdd(&spray[py*width+px],amount);
+  }
+}
+__global__ void tornado_spray_composite(const unsigned *spray,float4 *hdr,int width,int height) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  if(x>=width||y>=height)return;
+  int i=y*width+x;float alpha=1-expf(-(float)spray[i]/65536);
+  float4 a=hdr[i];hdr[i]=make_float4(lerp(a.x,.85f,alpha),lerp(a.y,.92f,alpha),lerp(a.z,.96f,alpha),1);
+}
+__device__ float4 tornadoVolume(float3 origin,float3 direction,float limit,const float4 *lighting,float tx,float tz) {
+  float3 o=sub(origin,v3(tx,0,tz));
+  float nearT=0,farT=limit;
+  float dx=fabsf(direction.x)<.000001f?.000001f:direction.x;
+  float dy=fabsf(direction.y)<.000001f?.000001f:direction.y;
+  float dz=fabsf(direction.z)<.000001f?.000001f:direction.z;
+  nearT=fmaxf(nearT,fminf((-144-o.x)/dx,(144-o.x)/dx));farT=fminf(farT,fmaxf((-144-o.x)/dx,(144-o.x)/dx));
+  nearT=fmaxf(nearT,fminf(-o.y/dy,(576-o.y)/dy));farT=fminf(farT,fmaxf(-o.y/dy,(576-o.y)/dy));
+  nearT=fmaxf(nearT,fminf((-144-o.z)/dz,(144-o.z)/dz));farT=fminf(farT,fmaxf((-144-o.z)/dz,(144-o.z)/dz));
+  if(farT<=nearT)return make_float4(0,0,0,1);
+  float step=(farT-nearT)/64,trans=1;float3 light=v3(0,0,0);
+  for(int j=0;j<64;j++) {
+    if(trans<.015f)break;
+    float3 p=add(o,mul(direction,nearT+((float)j+.5f)*step));
+    float3 cell=v3(p.x/6+23.5f,p.y/6-.5f,p.z/6+23.5f);
+    float4 q=tornadoSample(lighting,cell);
+    // Hand the upper condensation to the scene's cloud integrator, which also
+    // computes its solar occlusion and shadows. Avoid drawing it over clouds.
+    float edge=(1-smooth(125,144,fmaxf(fabsf(p.x),fabsf(p.z))))*(1-smooth(350,400,p.y));
+    float density=q.w*edge;
+    if(density>.0001f) {
+      float3 lit=v3(q.x,q.y,q.z);
+      float opacity=1-expf(-density*step);
+      light=add(light,mul(lit,trans*opacity));trans*=1-opacity;
+    }
+  }
+  return make_float4(light.x,light.y,light.z,trans);
+}
+// Half-resolution radiance/transmittance cache for the view and planar reflection.
+// Surface normals warp the reflection cache in the full-resolution water pass.
+__global__ void tornado_view(const float4 *lighting,float4 *volume,int width,int height,
+                            float camX,float camY,float camZ,float yaw,float pitch,float tx,float tz) {
+  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
+  int w=width/2,h=height/2;if(x>=w||y>=h)return;
+  float3 d=ray(2*((float)x+.5f)/(float)w-1,1-2*((float)y+.5f)/(float)h,(float)width/(float)height,yaw,pitch);
+  float3 origin=v3(camX,camY,camZ);
+  float limit=d.y<0?-camY/d.y:10000;
+  volume[y*w+x]=tornadoVolume(origin,d,limit,lighting,tx,tz);
+  // Mirror camera across the mean sea plane: actual parallax, no environment-map
+  // approximation. Wave-normal offsets are applied during final compositing.
+  volume[w*h+y*w+x]=d.y<0?tornadoVolume(v3(camX,-camY,camZ),v3(d.x,-d.y,d.z),10000,lighting,tx,tz):make_float4(0,0,0,1);
+}
+__device__ float4 tornadoCached(const float4 *volume,float x,float y,int width,int height,int reflection) {
+  int w=width/2,h=height/2;
+  x=fmaxf(0,fminf((float)w-1,x));y=fmaxf(0,fminf((float)h-1,y));
+  int ix=(int)floorf(x),iy=(int)floorf(y),jx=min(w-1,ix+1),jy=min(h-1,iy+1),offset=reflection*w*h;
+  return mix4(mix4(volume[offset+iy*w+ix],volume[offset+iy*w+jx],frac(x)),mix4(volume[offset+jy*w+ix],volume[offset+jy*w+jx],frac(x)),frac(y));
+}
+__device__ float cloudDensity(float3 p, const float4 *weather, float time, int detail,const float4 *cloudMap,int tornadoOn,float tx,float tz) {
+  float vortexCloud=0;
+  if(tornadoOn!=0 && p.y>330 && p.y<1000 && fabsf(p.x-tx)<360 && fabsf(p.z-tz)<360) {
+    // Continue the resolved circulation into a broader cloud-base entrainment
+    // region. The material displacement, rather than a clock-driven angle,
+    // carries cloud structure around the vortex.
+    float3 local=v3((p.x-tx)/2.5f,360+(p.y-360)*.32f,(p.z-tz)/2.5f);
+    float4 mapped=tornadoSample(cloudMap,v3(local.x/6+23.5f,local.y/6-.5f,local.z/6+23.5f));
+    float blend=(1-smooth(95,144,fmaxf(fabsf(local.x),fabsf(local.z))))*(1-smooth(780,1000,p.y));
+    vortexCloud=mapped.w*80*blend*smooth(350,430,p.y);
+    p=add(p,mul(v3((mapped.x-local.x)*2.5f,(mapped.y-local.y)*.4f,(mapped.z-local.z)*2.5f),blend));
+  }
   float qfront=(p.x*weather[1].x+p.z*weather[1].y-weather[0].w)/2200;
   float front=weather[1].z<0?0:expf(-qfront*qfront)*weather[1].w;
   float cover = sat(weather[0].z + front*.69f);
@@ -715,16 +1048,16 @@ __device__ float cloudDensity(float3 p, const float4 *weather, float time, int d
                   +.35f*noise3(mul(q,13.7f));
     density = sat(density-(1-erosion)*.35f*(1-density));
   }
-  return density*(1+front*.65f);
+  return density*(1+front*.65f)+vortexCloud;
 }
-__device__ float cloudSun(float3 p, const float4 *weather, float time) {
+__device__ float cloudSun(float3 p, const float4 *weather, float time,const float4 *cloudMap,int tornadoOn,float tx,float tz) {
   float3 sun = v3(.08959f,.51504f,-.85247f);
-  float optical = cloudDensity(add(p,mul(sun,70)),weather,time,0)*100
-                +cloudDensity(add(p,mul(sun,230)),weather,time,0)*240
-                +cloudDensity(add(p,mul(sun,550)),weather,time,0)*440;
+  float optical = cloudDensity(add(p,mul(sun,70)),weather,time,0,cloudMap,tornadoOn,tx,tz)*100
+                +cloudDensity(add(p,mul(sun,230)),weather,time,0,cloudMap,tornadoOn,tx,tz)*240
+                +cloudDensity(add(p,mul(sun,550)),weather,time,0,cloudMap,tornadoOn,tx,tz)*440;
   return expf(-optical*.009f);
 }
-__device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, float time) {
+__device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, float time,const float4 *cloudMap,int tornadoOn,float tx,float tz) {
   float overhead=stormAt(weather,origin.x,origin.z);
   float3 clear=mul(sky(d),1-overhead*.60f), light=mul(v3(1.8f,1.65f,1.42f),1-overhead*.45f);
   float elevation=fmaxf(d.y,.018f);
@@ -738,9 +1071,9 @@ __device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, floa
     if(trans < .012f) break;
     float t=start+((float)i+.5f)*step;
     float3 p=add(origin,mul(d,t));
-    float density=cloudDensity(p,weather,time,1);
+    float density=cloudDensity(p,weather,time,1,cloudMap,tornadoOn,tx,tz);
     if(density>.005f) {
-      float direct=cloudSun(p,weather,time);
+      float direct=cloudSun(p,weather,time,cloudMap,tornadoOn,tx,tz);
       float high=sat((p.y-360)/1300);
       float3 ambient=mix3(v3(.055f,.085f,.135f),v3(.32f,.41f,.55f),high);
       // Cheap multiple-scattering fill prevents pitch-black cloud interiors.
@@ -762,24 +1095,24 @@ __device__ float3 volumeSky(float3 d, const float4 *weather, float3 origin, floa
   return mix3(clear,result,smooth(.005f,.045f,d.y));
 }
 __global__ void sky_environment(float4 *environment, const float4 *weather,
-                                 float camX,float camY,float camZ,float time) {
+                                 float camX,float camY,float camZ,float time,const float4 *cloudMap,int tornadoOn,float tx,float tz) {
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x), y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
   if(x>=512||y>=128)return;
   float angle=((float)x+.5f)*6.283185307f/512;
   float elevation=square(((float)y+.5f)/128)*1.570796327f;
   float3 d=v3(sinf(angle)*cosf(elevation),sinf(elevation),-cosf(angle)*cosf(elevation));
-  float3 col=volumeSky(d,weather,v3(camX,camY,camZ),time);
+  float3 col=volumeSky(d,weather,v3(camX,camY,camZ),time,cloudMap,tornadoOn,tx,tz);
   environment[y*512+x]=make_float4(col.x,col.y,col.z,1);
 }
 __global__ void cloud_shadow(float4 *environment, const float4 *weather,
-                              float camX,float camZ,float time) {
+                              float camX,float camZ,float time,const float4 *cloudMap,int tornadoOn,float tx,float tz) {
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),z=(int)(blockIdx.y*blockDim.y+threadIdx.y);
   if(x>=128||z>=128)return;
   float wx=floorf(camX/32)*32+((float)x-64)*32, wz=floorf(camZ/32)*32+((float)z-64)*32;
   float optical=0;
   for(int i=0;i<8;i++){
     float h=400+(float)i*180;
-    optical+=cloudDensity(v3(wx+h*.17395f,h,wz-h*1.65518f),weather,time,0)*180/.51504f;
+    optical+=cloudDensity(v3(wx+h*.17395f,h,wz-h*1.65518f),weather,time,0,cloudMap,tornadoOn,tx,tz)*180/.51504f;
   }
   environment[65536+z*128+x]=make_float4(expf(-optical*.009f),0,0,0);
 }
@@ -801,11 +1134,11 @@ __device__ float environmentShadow(const float4 *environment,float x,float z,flo
 // Half-resolution visible sky uses samples where the camera is looking.
 // No temporal history: rapid flight and lightning cannot leave ghost trails.
 __global__ void sky_view(float4 *environment,const float4 *weather,int width,int height,
-                          float camX,float camY,float camZ,float yaw,float pitch,float time){
+                          float camX,float camY,float camZ,float yaw,float pitch,float time,const float4 *cloudMap,int tornadoOn,float tx,float tz){
  int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),y=(int)(blockIdx.y*blockDim.y+threadIdx.y);
  int w=width/2,h=height/2;if(x>=w||y>=h)return;
  float3 d=ray(2*((float)x+.5f)/(float)w-1,1-2*((float)y+.5f)/(float)h,(float)width/(float)height,yaw,pitch);
- float3 col=d.y>0?volumeSky(d,weather,v3(camX,camY,camZ),time):sky(d);
+ float3 col=d.y>0?volumeSky(d,weather,v3(camX,camY,camZ),time,cloudMap,tornadoOn,tx,tz):sky(d);
  environment[81920+y*w+x]=make_float4(col.x,col.y,col.z,1);
 }
 __device__ float3 cameraSky(const float4 *environment,int ix,int iy,int width,int height){
@@ -848,7 +1181,9 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
                              float camZ, float camY, float yaw, float pitch,
                              float centerX, float centerZ, float depth,
                              float time, int view, const float4 *weather,
-                             const float4 *foam, int buoy, const float4 *environment) {
+                             const float4 *foam, int buoy, const float4 *environment,
+                             const float4 *tornadoVolumeCache,const float4 *tornadoSeaState,
+                             int tornadoOn,float tornadoX,float tornadoZ) {
   int ix = (int)(blockIdx.x * blockDim.x + threadIdx.x),
       iy = (int)(blockIdx.y * blockDim.y + threadIdx.y);
   if (ix >= width || iy >= height)
@@ -868,10 +1203,16 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     for (int i = 0; i < 5; i++) {
       a = water(surface, rip, camX + wd.x * t, camZ + wd.z * t, centerX,
                 centerZ, t);
+      if(tornadoOn!=0)a.x+=tornadoWaterAt(tornadoSeaState,camX+wd.x*t,camZ+wd.z*t,tornadoX,tornadoZ).x;
       t = lerp(t, (a.x - camY) / wd.y, .7f);
     }
     float3 P = v3(camX + wd.x * t, camY + wd.y * t, camZ + wd.z * t);
     a = water(surface, rip, P.x, P.z, centerX, centerZ, t);
+    float4 vortexWater=make_float4(0,0,0,0);
+    if(tornadoOn!=0) {
+      vortexWater=tornadoWaterAt(tornadoSeaState,P.x,P.z,tornadoX,tornadoZ);
+      a.x+=vortexWater.x;a.y+=vortexWater.y;a.z+=vortexWater.z;
+    }
     float3 n = norm(v3(-a.y, 1, -a.z)), v = mul(wd, -1);
     float nv = dot3(n, v);
     if (nv < .02f) {
@@ -893,6 +1234,10 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     rr.y = fabsf(rr.y);
     float3 reflection = mul(add(environmentSky(environment, rr),stormBolt(rr,P,weather,time)), 1.25f),
            h = norm(add(v, sun));
+    if(tornadoOn!=0) {
+      float4 vr=tornadoCached(tornadoVolumeCache,(float)ix*.5f+n.x*12,(float)iy*.5f+n.z*5,width,height,1);
+      reflection=add(mul(reflection,vr.w),v3(vr.x,vr.y,vr.z));
+    }
     float nh = fmaxf(0, dot3(n, h)), nl = fmaxf(0, dot3(n, sun)),
           a2 = .00012f + 1.2f * a.w + .000025f * t, c2 = fmaxf(nh * nh, .0001f),
           tan2 = (1 - c2) / c2,
@@ -1029,6 +1374,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
                haze);
     col = mix3(col, cameraSky(environment,ix,iy,width,height),
                smooth(-.0005f, .0015f, rd.y));
+    col=mix3(col,v3(.66f,.74f,.76f),vortexWater.w*.75f);
     visibleDistance = t;
     if (view == 1)
       col = mul(caus, .4f);
@@ -1073,6 +1419,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
             if (local.y > .20f && local.y < .35f)
               paint = v3(.87f, .84f, .7f);
             col = mul(paint, light * (1 - .4f * stormAt(weather, bx, bz)));
+            visibleDistance=distance;
             if (local.y > 1.0f)
               col = add(col, mul(v3(1, .32f, .025f),
                                  2.5f * powf(fmaxf(0, cosf(time * 2)), 20)));
@@ -1087,6 +1434,10 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
   }
   float mu = dot3(rd, sun);
   col = add(col, mul(SUN, 18 * smooth(.99996f, .999985f, mu)));
+  if(tornadoOn!=0 && view==0) {
+    float4 tv=tornadoCached(tornadoVolumeCache,(float)ix*.5f-.25f,(float)iy*.5f-.25f,width,height,0);
+    col=add(mul(col,tv.w),v3(tv.x,tv.y,tv.z));
+  }
   hdr[iy * width + ix] =
       make_float4(fmaxf(0, col.x), fmaxf(0, col.y), fmaxf(0, col.z), 1);
 }

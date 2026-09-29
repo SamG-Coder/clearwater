@@ -10,6 +10,7 @@
     "check": "node scripts/check.mjs",
     "test": "node scripts/verify.mjs",
     "test:weather": "node scripts/weather-verify.mjs",
+    "test:tornado": "node scripts/tornado-verify.mjs",
     "test:pool": "node scripts/pool-verify.mjs",
     "test:cube": "node scripts/cube-verify.mjs",
     "test:quality": "node scripts/quality-verify.mjs final && node scripts/quality-stability.mjs"

@@ -102,11 +102,11 @@ struct App {
   }ripple_normals<<<ripGrid,block>>>(rip[ripIndex].p,ripNormals.p);
  }
  void draw(){
-  sky_environment<<<dim3(64,16,1),block>>>(environment.p,weather.p,cam.x,cam.y,cam.z,time);
-  sky_view<<<dim3((width+15)/16,(height+15)/16,1),block>>>(environment.p,weather.p,width,height,cam.x,cam.y,cam.z,cam.yaw,cam.pitch,time);
-  cloud_shadow<<<dim3(16,16,1),block>>>(environment.p,weather.p,cam.x,cam.z,time);
+  sky_environment<<<dim3(64,16,1),block>>>(environment.p,weather.p,cam.x,cam.y,cam.z,time,weather.p,0,0,0);
+  sky_view<<<dim3((width+15)/16,(height+15)/16,1),block>>>(environment.p,weather.p,width,height,cam.x,cam.y,cam.z,cam.yaw,cam.pitch,time,weather.p,0,0,0);
+  cloud_shadow<<<dim3(16,16,1),block>>>(environment.p,weather.p,cam.x,cam.z,time,weather.p,0,0,0);
   dim3 grid(width/8,height/8,1);clear_caustics<<<dim3(64,64,1),block>>>(photons.p);trace_caustics<<<dim3(128,128,1),block>>>(surface.p,photons.p,depth);filter_caustics<<<dim3(64,64,1),block>>>(photons.p,caustics.p);
-  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view,weather.p,foam[foamIndex].p,buoy?1:0,environment.p);
+  render_water<<<grid,block>>>(surface.p,ripNormals.p,caustics.p,pebbles.p,hdr.p,width,height,cam.x,cam.z,cam.y,cam.yaw,cam.pitch,cx,cz,depth,time,view,weather.p,foam[foamIndex].p,buoy?1:0,environment.p,weather.p,weather.p,0,0,0);
   if(glare){glare_source<<<wavesGrid,block>>>(hdr.p,lens[0].p,width,height);transform(lens[0].p,lens[1].p,-1);glare_multiply<<<wavesGrid,block>>>(lens[0].p,lensKernel.p,lens[1].p);transform(lens[1].p,lens[0].p,1);}
   bloom_pass<<<grid,block>>>(hdr.p,bloom[0].p,width,height,0);bloom_pass<<<grid,block>>>(bloom[0].p,bloom[1].p,width,height,1);present<<<grid,block>>>(hdr.p,bloom[1].p,lens[1].p,pixels.p,width,height,exposure,glare?1:0);check(cudaGetLastError());
   check(cudaGraphicsMapResources(1,&shared));cudaArray_t array;check(cudaGraphicsSubResourceGetMappedArray(&array,shared,0,0));check(cudaMemcpy2DToArray(array,0,0,pixels.p,width*4,width*4,height,cudaMemcpyDeviceToDevice));check(cudaGraphicsUnmapResources(1,&shared));ComPtr<ID3D11Texture2D> back;hr(swap->GetBuffer(0,IID_PPV_ARGS(back.GetAddressOf())));context->CopyResource(back.Get(),texture.Get());hr(swap->Present(1,0));
