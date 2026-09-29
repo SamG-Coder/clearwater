@@ -1,0 +1,125 @@
+{
+  "floating": {
+    "count": 10000,
+    "finite": true,
+    "maxSpeed": 2.47337138117154,
+    "maxOmega": 9.900660241540324,
+    "contacts": 74,
+    "wet": 0.01185303165446967,
+    "qerr": 1.414000896371448e-7,
+    "airborne": 0,
+    "lofted": 0,
+    "risingSpinning": 0,
+    "maxAltitude": 0.21722298860549927
+  },
+  "sustained": {
+    "count": 10000,
+    "finite": true,
+    "maxSpeed": 2.4045251066281064,
+    "maxOmega": 8.590465958847638,
+    "contacts": 780,
+    "wet": 0.012043343293108046,
+    "qerr": 1.5124606378424943e-7,
+    "airborne": 0,
+    "lofted": 0,
+    "risingSpinning": 0,
+    "maxAltitude": 0.1910850629210472
+  },
+  "storm": {
+    "count": 10000,
+    "finite": true,
+    "maxSpeed": 44.66620311620183,
+    "maxOmega": 41.53178355527484,
+    "contacts": 1022,
+    "wet": 0.005855266606807709,
+    "qerr": 1.5097557726218014e-7,
+    "airborne": 5313,
+    "lofted": 3748,
+    "risingSpinning": 1048,
+    "maxAltitude": 101.6897545158863
+  },
+  "lofted": {
+    "count": 10000,
+    "finite": true,
+    "maxSpeed": 38.2046079670734,
+    "maxOmega": 44.382823841058304,
+    "contacts": 4948,
+    "wet": 0.006249437228217721,
+    "qerr": 1.6221733523114068e-7,
+    "airborne": 4366,
+    "lofted": 1072,
+    "risingSpinning": 522,
+    "maxAltitude": 281.41194412112236
+  },
+  "collision": {
+    "pairContacts": 1,
+    "leftVelocity": -0.9030789136886597,
+    "rightVelocity": 1.3049871921539307,
+    "controlVelocity": 0.04909864068031311
+  },
+  "closeBins": {
+    "nodes": 54418,
+    "overflow": 0
+  },
+  "stormBins": {
+    "nodes": 23540,
+    "overflow": 0
+  },
+  "closeGpu": {
+    "width": 1152,
+    "height": 720,
+    "samples": 40,
+    "renderGpuMedianMs": 1.548928,
+    "renderGpuP95Ms": 1.57072,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "scope": "Stationary-camera GPU frame with ocean and enabled effects (one 30 Hz tornado step, two 120 Hz duck steps); sky-cache cadence; excludes presentation"
+  },
+  "tornadoGpu": {
+    "width": 1152,
+    "height": 720,
+    "samples": 40,
+    "renderGpuMedianMs": 12.84752,
+    "renderGpuP95Ms": 16.153664,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "blackwell",
+      "device": "",
+      "description": "",
+      "features": [
+        "core-features-and-limits",
+        "subgroup-size-control",
+        "shader-f16",
+        "float32-filterable",
+        "subgroups",
+        "timestamp-query"
+      ],
+      "timestampQuery": true,
+      "limits": {
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxStorageBufferBindingSize": 268435456
+      }
+    },
+    "scope": "Stationary-camera GPU frame with ocean and enabled effects (one 30 Hz tornado step, two 120 Hz duck steps); sky-cache cadence; excludes presentation"
+  },
+  "errors": []
+}

@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include "../src/clearwater.cu"
+#include "../src/ducks.cu"
 
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;

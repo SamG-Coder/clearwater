@@ -716,11 +716,25 @@ __device__ float4 tornadoSample(const float4 *a,float3 p) {
                    mix4(a[tornadoIndex(ix,iy+1,iz+1)],a[tornadoIndex(ix+1,iy+1,iz+1)],frac(x)),frac(y)),frac(z));
 }
 __device__ float3 tornadoCell(int x,int y,int z) {return v3(((float)x-23.5f)*6,((float)y+.5f)*6,((float)z-23.5f)*6);}
+// Solenoidal Fourier gust modes: each velocity direction is perpendicular to
+// its wave vector. Smooth in space/time, unlike independent per-frame jitter.
+__device__ float3 tornadoGust(float3 p,float time) {
+  float a=sinf(dot3(p,v3(.73f,.41f,.55f))-time*1.13f);
+  float b=sinf(dot3(p,v3(-.36f,.81f,.46f))+time*.79f+1.7f);
+  float c=sinf(dot3(p,v3(.61f,-.53f,.59f))-time*1.47f+4.1f);
+  float d=sinf(dot3(p,v3(.39f,.25f,-.89f))+time*.57f+2.6f);
+  return v3(.55f*a+.81f*b+.89f*d,.36f*b+.59f*c,-.73f*a+.53f*c+.39f*d);
+}
 __device__ float3 tornadoWind(float3 p,float strength) {
   float r2=p.x*p.x+p.z*p.z, radius=18+p.y*.045f;
   float spin=2*38*strength*radius/(radius*radius+r2);
-  float inflow=5*expf(-p.y/100)/(sqrtf(r2)+15);
-  return v3(-p.z*spin-p.x*inflow,14*strength*expf(-r2/3200)*smooth(0,30,p.y),p.x*spin-p.z*inflow);
+  // Meridional circulation from a streamfunction: radial convergence at the
+  // surface feeds the core updraft, with a weak outer return flow. The paired
+  // radial/vertical terms are analytically divergence-free and w=0 at sea level.
+  float radial=expf(-r2/3844),vertical=expf(-fmaxf(0,p.y)/22);
+  float inflow=50*strength/(2*22)*radial*vertical;
+  float updraft=50*strength*(1-r2/3844)*radial*(1-vertical);
+  return v3(-p.z*spin-p.x*inflow,updraft,p.x*spin-p.z*inflow);
 }
 __global__ void tornado_curl(const float4 *velocity,float4 *curl) {
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
@@ -749,7 +763,7 @@ __global__ void tornado_init(float4 *velocity,float4 *moisture,float4 *pressure,
   cloudMap[i]=make_float4(p.x,p.y,p.z,liquid);
   if(i<74752)sea[i]=make_float4(0,0,0,0);
 }
-__global__ void tornado_advect(const float4 *velocity,const float4 *moisture,const float4 *curl,const float4 *cloudMap,float4 *nextVelocity,float4 *nextMoisture,float4 *nextCloudMap,float dt,float strength) {
+__global__ void tornado_advect(const float4 *velocity,const float4 *moisture,const float4 *curl,const float4 *cloudMap,float4 *nextVelocity,float4 *nextMoisture,float4 *nextCloudMap,float dt,float strength,float time) {
   int x=(int)(blockIdx.x*blockDim.x+threadIdx.x),yz=(int)(blockIdx.y*blockDim.y+threadIdx.y);
   if(x>=48||yz>=4608)return;
   int y=yz%96,z=yz/96,i=tornadoIndex(x,y,z);
@@ -771,10 +785,16 @@ __global__ void tornado_advect(const float4 *velocity,const float4 *moisture,con
   a.x+=confinement.x;a.y+=confinement.y;a.z+=confinement.z;
   float r=sqrtf(p.x*p.x+p.z*p.z),edge=smooth(95,140,r);
   // Open driven lateral boundary, warm ocean inflow and buoyancy in the core.
-  float relax=(.025f+edge*.8f)*dt;
+  float relax=(.12f+edge*.8f)*dt;
   a.x=lerp(a.x,target.x,relax);a.z=lerp(a.z,target.z,relax);
   a.y+=dt*(9.81f*q.z/291-.08f*a.y-9.81f*q.y);
-  a.y=lerp(a.y,target.y,edge*dt);
+  a.y=lerp(a.y,target.y,(.12f+edge)*dt);
+  // Continuously force resolved eddies; projection below removes divergence
+  // introduced by the envelope and the ocean boundary. Shared by clouds/water.
+  float3 gust=tornadoGust(mul(p,.075f),time*.7f);
+  float amplitude=8*strength*expf(-r*r/12000);
+  a.x+=dt*amplitude*gust.x;a.z+=dt*amplitude*gust.z;
+  a.y+=dt*amplitude*gust.y*smooth(0,12,p.y);
   float heat=expf(-r*r/3600)*expf(-p.y/35);
   q.z+=dt*(heat*.15f-q.z*.035f);
   q.x=lerp(q.x,.009f+.007f*expf(-r*r/1800),dt*(edge*.5f+heat*.8f));
@@ -1439,7 +1459,7 @@ __global__ void render_water(const float4 *surface, const float4 *rip,
     col=add(mul(col,tv.w),v3(tv.x,tv.y,tv.z));
   }
   hdr[iy * width + ix] =
-      make_float4(fmaxf(0, col.x), fmaxf(0, col.y), fmaxf(0, col.z), 1);
+      make_float4(fmaxf(0, col.x), fmaxf(0, col.y), fmaxf(0, col.z), visibleDistance);
 }
 __global__ void bloom_pass(const float4 *input, float4 *output, int width,
                            int height, int axis) {

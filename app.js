@@ -19,6 +19,7 @@ const state = {
   clouds: 0.28,
   direction: 0.64,
   buoy: false,
+  ducks: false, duckX: 0, duckZ: -60,
   tornado: false,
   tornadoX: 0,
   tornadoZ: -650,
@@ -94,7 +95,7 @@ function tornadoStep(batch, dt) {
   tornadoAccumulator = Math.min(tornadoAccumulator + dt, 2 / 30);
   while (tornadoAccumulator >= 1 / 30) {
     batch.dispatch(k.tornado_curl.bind({velocity:tornadoVelocity[0],curl:tornadoCurl}), tornadoGrid);
-    batch.dispatch(k.tornado_advect.bind({velocity:tornadoVelocity[0],moisture:tornadoMoisture[tornadoMoistureIndex],curl:tornadoCurl,cloudMap:tornadoCloudMap[tornadoMoistureIndex],nextVelocity:tornadoVelocity[1],nextMoisture:tornadoMoisture[1-tornadoMoistureIndex],nextCloudMap:tornadoCloudMap[1-tornadoMoistureIndex]}, {dt:1/30,strength:state.tornadoStrength}), tornadoGrid);
+    batch.dispatch(k.tornado_advect.bind({velocity:tornadoVelocity[0],moisture:tornadoMoisture[tornadoMoistureIndex],curl:tornadoCurl,cloudMap:tornadoCloudMap[tornadoMoistureIndex],nextVelocity:tornadoVelocity[1],nextMoisture:tornadoMoisture[1-tornadoMoistureIndex],nextCloudMap:tornadoCloudMap[1-tornadoMoistureIndex]}, {dt:1/30,strength:state.tornadoStrength,time:tornadoSteps/30}), tornadoGrid);
     tornadoMoistureIndex = 1 - tornadoMoistureIndex;
     batch.dispatch(k.tornado_divergence.bind({velocity:tornadoVelocity[1],rhs:tornadoRhs}), tornadoGrid);
     for (let i=0;i<12;i++) {
@@ -117,6 +118,41 @@ function tornadoStep(batch, dt) {
     tornadoLightingDirty = true;
   }
 }
+const duckGrid=[16,10,1];
+let duckBodies,duckHeads,duckLinks,duckDepth,duckNodes,duckIndex=0,duckReset=true,duckAccumulator=0,duckSteps=0;
+function ducksHash(batch) {
+  batch.dispatch(k.ducks_hash_clear.bind({heads:duckHeads}),[32,32,1]);
+  batch.dispatch(k.ducks_hash.bind({bodies:duckBodies[duckIndex],heads:duckHeads,links:duckLinks}),duckGrid);
+}
+function ducksStep(batch,dt) {
+  if(!state.ducks)return;
+  if(duckReset) {
+    duckIndex=0;duckAccumulator=0;duckSteps=0;
+    batch.dispatch(k.ducks_init.bind({bodies:duckBodies[0],surface,sea:tornadoSeaState[tornadoSeaIndex]}, {originX:state.duckX,originZ:state.duckZ,tornadoOn:state.tornado?1:0,tx:state.tornadoX,tz:state.tornadoZ}),duckGrid);
+    duckReset=false;
+  }
+  duckAccumulator=Math.min(duckAccumulator+dt,4/120);
+  while(duckAccumulator>=1/120) {
+    ducksHash(batch);
+    batch.dispatch(k.ducks_step.bind({previous:duckBodies[duckIndex],next:duckBodies[1-duckIndex],heads:duckHeads,links:duckLinks,surface,sea:tornadoSeaState[tornadoSeaIndex],air:tornadoVelocity[0],weather},{dt:1/120,tornadoOn:state.tornado?1:0,tx:state.tornadoX,tz:state.tornadoZ,time:duckSteps/120}),duckGrid);
+    duckIndex=1-duckIndex;duckAccumulator-=1/120;duckSteps++;
+  }
+  if(dt>0){
+    ducksHash(batch);
+    batch.dispatch(k.ducks_wakes.bind({bodies:duckBodies[duckIndex],heads:duckHeads,links:duckLinks,ripples:rip[ripIndex]},{centerX,centerZ,dt:Math.min(dt,4/120)}),RG);
+  }
+}
+function duckCamera(close=false) {
+  state.x=state.duckX;state.z=state.duckZ+(close?51:90);state.y=close?.8:38;
+  state.yaw=0;state.pitch=close?-.11:-.48;
+}
+$("ducks").onclick=()=>{
+  state.ducks=!state.ducks;$("ducks").textContent=state.ducks?"Remove 10,000 ducks":"Add 10,000 rubber ducks";
+  $("duckStatus").textContent=state.ducks?"10,000 bodies \u00b7 120 Hz physics":"Floating rigid bodies \u00b7 wave buoyancy \u00b7 collisions";
+  if(state.ducks){state.duckX=state.tornado?state.tornadoX:state.x+Math.sin(state.yaw)*60;state.duckZ=state.tornado?state.tornadoZ:state.z-Math.cos(state.yaw)*60;duckReset=true;duckCamera();play(true);}
+};
+$("duckOverview").onclick=()=>{if(state.ducks)duckCamera();};
+$("duckClose").onclick=()=>{if(state.ducks)duckCamera(true);};
 function fail(e) {
   failed = true;
   diag.errors.push(String(e.message || e));
@@ -192,9 +228,9 @@ $("tornado").onclick = () => {
   state.tornado = !state.tornado;
   $("tornado").textContent = state.tornado ? "Stop tornado" : "Start tornado";
   if (state.tornado) {
-    state.tornadoX = state.x + Math.sin(state.yaw) * 650;
-    state.tornadoZ = state.z - Math.cos(state.yaw) * 650;
-    state.pitch = .22;
+    state.tornadoX = state.ducks ? state.duckX : state.x + Math.sin(state.yaw) * 650;
+    state.tornadoZ = state.ducks ? state.duckZ : state.z - Math.cos(state.yaw) * 650;
+    if(!state.ducks)state.pitch = .22;
     state.clouds = .62;
     $("clouds").value = state.clouds;
     tornadoReset = true;
@@ -260,8 +296,9 @@ async function resize() {
   height = Math.ceil((width * innerHeight) / innerWidth / 8) * 8;
   canvas.width = width;
   canvas.height = height;
-  for (const b of [environment, hdr, ...(bloom || []), pixels, tornadoVolumeCache,tornadoSprayImage]) if (b) rt.destroyBuffer(b);
+  for (const b of [environment, hdr, ...(bloom || []), pixels, tornadoVolumeCache,tornadoSprayImage,duckDepth]) if (b) rt.destroyBuffer(b);
   skyEnvironmentCache=skyViewCache=tornadoViewCache=null;
+  duckDepth=rt.createBuffer(width*height*4);
   tornadoSprayImage=rt.createBuffer(width*height*4);
   tornadoVolumeCache=rt.createBuffer(width*height/2*16);
   environment=rt.createBuffer((81920+width*height/4)*16);
@@ -426,7 +463,7 @@ function setupLens() {
 function render(timestampWrites, simulate = false) {
   const batch = rt.batch({ timestampWrites }),
     grid = [width / 8, height / 8, 1];
-  if (simulate) { waves(batch); ripples(batch, 1/60); tornadoStep(batch,1/30); }
+  if (simulate) { waves(batch); ripples(batch, 1/60); tornadoStep(batch,1/30); ducksStep(batch,1/60); }
   if(state.tornado) {
     const volumeKey=[state.x,state.y,state.z,state.yaw,state.pitch,width,height,state.tornadoX,state.tornadoZ,tornadoSteps].join(':');
     if(tornadoLightingDirty) {
@@ -494,6 +531,12 @@ function render(timestampWrites, simulate = false) {
     ),
     grid,
   );
+  if(state.ducks && +$("view").value===0) {
+    const camera={width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch};
+    batch.dispatch(k.ducks_pixels_clear.bind({depth:duckDepth},{width,height}),grid);
+    batch.dispatch(k.ducks_project.bind({bodies:duckBodies[duckIndex],depth:duckDepth,nodes:duckNodes},camera),duckGrid);
+    batch.dispatch(k.ducks_shade.bind({bodies:duckBodies[duckIndex],depth:duckDepth,nodes:duckNodes,hdr,surface,sea:tornadoSeaState[tornadoSeaIndex],environment},{...camera,tornadoOn:state.tornado?1:0,tx:state.tornadoX,tz:state.tornadoZ}),grid);
+  }
   if(state.tornado && +$("view").value===0) {
     batch.dispatch(k.tornado_spray_clear.bind({spray:tornadoSprayImage},{width,height}),grid);
     batch.dispatch(k.tornado_spray_draw.bind({particles:tornadoSpray,spray:tornadoSprayImage},{width,height,camX:state.x,camY:state.y,camZ:state.z,yaw:state.yaw,pitch:state.pitch,tx:state.tornadoX,tz:state.tornadoZ}),[32,4,1]);
@@ -615,6 +658,7 @@ async function frame(now) {
       waves(batch);
       ripples(batch, state.playing ? dt : 0);
       tornadoStep(batch, frameDt);
+      ducksStep(batch,frameDt);
       batch.submit();
       render();
       await rt.idle();
@@ -647,6 +691,16 @@ async function exclusive(fn) {
 window.clearwaterLab = {
   state,
   pause: () => play(false),
+  async ducksAdvance(steps=120) {
+    return exclusive(async()=>{play(false);for(let i=0;i<steps;i++){
+      frameDt=1/120;weatherDt=0;state.time+=frameDt;
+      const b=rt.batch();waves(b);ripples(b,frameDt);tornadoStep(b,frameDt);ducksStep(b,frameDt);b.submit();
+      if(i%12===11)await rt.idle();
+    }render();await rt.idle();});
+  },
+  async ducksBins() {return exclusive(async()=>{const a=await rt.read(duckDepth,Uint32Array);return {nodes:a[(width/8)*(height/8)],overflow:a[(width/8)*(height/8)+1]};});},
+  async ducksInspect() {return exclusive(async()=>({steps:duckSteps,bodies:Array.from(await rt.read(duckBodies[duckIndex]))}));},
+  async ducksWrite(data) {return exclusive(async()=>{rt.write(duckBodies[duckIndex],new Float32Array(data));});},
   async tornadoCouplingTest() {
     return exclusive(async () => {
       const calm=rt.createBuffer(3*65536*16),coupled=rt.createBuffer(65536*16),control=rt.createBuffer(65536*16);
@@ -714,7 +768,7 @@ window.clearwaterLab = {
           read.unmap();
         }
         times.sort((a,b) => a-b);
-        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: simulate ? "Stationary-camera GPU frame with ocean, local FFT, spray and one 30 Hz tornado step; normal sky-cache refresh cadence; excludes presentation" : "Paused stationary-camera GPU rendering with reused sky/volume caches; excludes simulation and presentation"};
+        return {width, height, samples, renderGpuMedianMs: times[Math.floor(times.length/2)], renderGpuP95Ms: times[Math.floor(times.length*.95)], adapter: rt.describe(), scope: simulate ? "Stationary-camera GPU frame with ocean and enabled effects (one 30 Hz tornado step, two 120 Hz duck steps); sky-cache cadence; excludes presentation" : "Paused stationary-camera GPU rendering with reused sky/volume caches; excludes simulation and presentation"};
       } finally {querySet.destroy(); resolve.destroy(); read.destroy();}
     });
   },
@@ -906,7 +960,7 @@ $("capture").onclick = () =>
 try {
   rt = await GpuRuntime.create({ onError: fail });
   ctx = canvas.getContext("webgpu");
-  const source = await (await fetch("./src/clearwater.cu")).text();
+  const source = await (await fetch("./src/clearwater.cu")).text()+"\n"+await (await fetch("./src/ducks.cu")).text();
   for (const name of [...source.matchAll(/__global__ void (\w+)/g)].map(
     (m) => m[1],
   )) {
@@ -936,6 +990,9 @@ try {
   chopFFT=[rt.createBuffer(3*65536*16),rt.createBuffer(3*65536*16)];
   linearSurface=rt.createBuffer(3*65536*16);
   weather = rt.createBuffer(2 * 16);
+  duckBodies=[rt.createBuffer(10000*5*16),rt.createBuffer(10000*5*16)];
+  duckNodes=rt.createBuffer(1048576*2*4);
+  duckHeads=rt.createBuffer(65536*4);duckLinks=rt.createBuffer(10000*4);
   tornadoVelocity = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
   tornadoMoisture = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
   tornadoPressure = [rt.createBuffer(tornadoCells*16),rt.createBuffer(tornadoCells*16)];
